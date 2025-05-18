@@ -1,0 +1,32 @@
+{
+    "extends": "../../tools/tsc/tsconfig.lib.json",
+    "compilerOptions": {
+        "types": [
+            "@matter/tools",
+            "globals"
+        ]
+    },
+    "references": [
+        {
+            "path": "../../general/src"
+        },
+        {
+            "path": "../../model/src"
+        },
+        {
+            "path": "../../node/src"
+        },
+        {
+            "path": "../../nodejs/src"
+        },
+        {
+            "path": "../../protocol/src"
+        },
+        {
+            "path": "../../tools/src"
+        },
+        {
+            "path": "../../types/src"
+        }
+    ]
+}

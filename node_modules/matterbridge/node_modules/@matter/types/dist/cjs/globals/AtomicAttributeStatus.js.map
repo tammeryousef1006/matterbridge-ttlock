@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": ["../../../src/globals/AtomicAttributeStatus.ts"],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAAA;AAAA;AAAA;AAAA;AAAA;AAQA,uBAAoC;AACpC,yBAA+B;AAE/B,uBAAwB;AAXxB;AAAA;AAAA;AAAA;AAAA;AAmBO,MAAM,+BAA2B,4BAAU;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA,EAM9C,iBAAa,2BAAS,GAAG,iCAAc;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA,EAOvC,gBAAY,2BAAS,OAAG,0BAAgB,CAAC;AAC7C,CAAC;",
+  "names": []
+}

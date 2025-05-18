@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": ["../../../src/globals/AtomicRequestType.ts"],
+  "mappings": "AAAA;AAAA;AAAA;AAAA;AAAA;AAWO,IAAK,oBAAL,kBAAKA,uBAAL;AAIH,EAAAA,sCAAA,gBAAa,KAAb;AAKA,EAAAA,sCAAA,iBAAc,KAAd;AAKA,EAAAA,sCAAA,mBAAgB,KAAhB;AAdQ,SAAAA;AAAA,GAAA;",
+  "names": ["AtomicRequestType"]
+}
