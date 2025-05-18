@@ -22,7 +22,7 @@ A Matterbridge plugin for controlling TTLock smart locks via the TTLock API. Thi
 npm install -g matterbridge-ttlock
 
 # Or install a specific version from a local file
-npm install -g /path/to/matterbridge-ttlock-1.0.2.tgz
+npm install -g /path/to/matterbridge-ttlock-1.0.8.tgz
 ```
 
 ## Configuration
