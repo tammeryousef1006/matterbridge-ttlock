@@ -1,6 +1,6 @@
 {
   "name": "matterbridge-ttlock",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "Matterbridge TTlock Plugin",
   "main": "dist/index.js",
   "type": "module",
@@ -37,6 +37,7 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
+    "matterbridge-ttlock.schema.json",
     "package.json"
   ],
   "devDependencies": {

@@ -1,0 +1,54 @@
+{
+  "title": "Matterbridge TTLock Plugin",
+  "description": "matterbridge-ttlock",
+  "type": "object",
+  "required": ["ttlock_client_id", "ttlock_client_secret"],
+  "properties": {
+    "name": {
+      "description": "Plugin name",
+      "type": "string",
+      "readOnly": true
+    },
+    "type": {
+      "description": "Plugin type",
+      "type": "string",
+      "readOnly": true
+    },
+    "ttlock_client_id": {
+      "description": "TTLock API client ID",
+      "type": "string"
+    },
+    "ttlock_client_secret": {
+      "description": "TTLock API client secret",
+      "type": "string"
+    },
+    "ttlock_username": {
+      "description": "TTLock account username",
+      "type": "string"
+    },
+    "ttlock_password": {
+      "description": "TTLock account password",
+      "type": "string"
+    },
+    "ttlock_access_token": {
+      "description": "TTLock API access token",
+      "type": "string"
+    },
+    "ttlock_api_base_url": {
+      "description": "TTLock API base URL",
+      "type": "string",
+      "default": "https://api.sciener.com"
+    },
+    "debug": {
+      "description": "Enable the debug for the plugin (development only)",
+      "type": "boolean",
+      "default": false
+    },
+    "unregisterOnShutdown": {
+      "description": "Unregister all devices on shutdown (development only)",
+      "type": "boolean",
+      "default": false,
+      "ui:widget": "hidden"
+    }
+  }
+}
