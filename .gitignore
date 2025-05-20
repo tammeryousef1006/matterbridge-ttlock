@@ -1,0 +1,9 @@
+# Dependencies
+node_modules/
+
+# Compiled output
+dist/
+tsconfig.tsbuildinfo
+
+# Output of 'npm pack'
+*.tgz
