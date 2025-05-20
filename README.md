@@ -27,36 +27,7 @@ npm install -g /path/to/matterbridge-ttlock-1.0.8.tgz
 
 ## Configuration
 
-Add the following to your Matterbridge configuration file:
-
-```json
-{
-  "platforms": [
-    {
-      "platform": "matterbridge-ttlock",
-      "ttlock_client_id": "YOUR_TTLOCK_CLIENT_ID",
-      "ttlock_client_secret": "YOUR_TTLOCK_CLIENT_SECRET",
-      "ttlock_username": "YOUR_TTLOCK_USERNAME",
-      "ttlock_password": "YOUR_TTLOCK_PASSWORD"
-    }
-  ]
-}
-```
-
-Alternatively, you can use an access token instead of username/password:
-
-```json
-{
-  "platforms": [
-    {
-      "platform": "matterbridge-ttlock",
-      "ttlock_client_id": "YOUR_TTLOCK_CLIENT_ID",
-      "ttlock_client_secret": "YOUR_TTLOCK_CLIENT_SECRET",
-      "ttlock_access_token": "YOUR_TTLOCK_ACCESS_TOKEN"
-    }
-  ]
-}
-```
+Open the plugin config in the frontend.
 
 ### Configuration Options
 
