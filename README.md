@@ -1,5 +1,7 @@
 # Matterbridge TTLock Plugin
 
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/6sjde6vkzl)
+
 A Matterbridge plugin for controlling TTLock smart locks via the TTLock API. This plugin integrates TTLock devices with [Luligu's Matterbridge](https://github.com/Luligu/matterbridge), allowing you to control your TTLock devices through Matter.
 
 ## Features
@@ -104,6 +106,12 @@ npm test
 # Create a package
 npm pack
 ```
+
+## Support
+
+If this plugin is useful to you, you can support its development:
+
+<a href="https://buymeacoffee.com/6sjde6vkzl"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy me a coffee"></a>
 
 ## License
 
