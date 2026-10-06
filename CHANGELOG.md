@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.1 (2026-10-06)
+- Buy Me a Coffee sponsor link in Matterbridge, on GitHub and in the README
+
 ## 1.2.0 (2026-10-06)
 - Compatible with Matterbridge 3.x: uses the current `matterbridge`, `matterbridge/matter/clusters` and `matterbridge/logger` exports (the old `doorLockDevice`/`DoorLock` imports no longer exist)
 - Access token is renewed automatically (refresh token, expiry tracking and re-login when TTLock rejects the token)

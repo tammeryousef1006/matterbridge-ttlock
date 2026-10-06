@@ -1,6 +1,6 @@
 {
   "name": "matterbridge-ttlock",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Matterbridge plugin for TTLock smart locks",
   "main": "dist/index.js",
   "type": "module",
@@ -33,6 +33,10 @@
     "url": "https://github.com/tammeryousef1006/matterbridge-ttlock/issues"
   },
   "homepage": "https://github.com/tammeryousef1006/matterbridge-ttlock#readme",
+  "funding": {
+    "type": "buymeacoffee",
+    "url": "https://buymeacoffee.com/6sjde6vkzl"
+  },
   "dependencies": {
     "axios": "^1.6.0"
   },
