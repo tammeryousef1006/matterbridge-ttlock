@@ -1,46 +1,77 @@
 {
   "title": "Matterbridge TTLock Plugin",
-  "description": "matterbridge-ttlock",
+  "description": "matterbridge-ttlock by Tamer Salah",
   "type": "object",
   "required": ["ttlock_client_id", "ttlock_client_secret"],
   "properties": {
     "name": {
       "description": "Plugin name",
       "type": "string",
-      "readOnly": true
+      "readOnly": true,
+      "ui:widget": "hidden"
     },
     "type": {
       "description": "Plugin type",
       "type": "string",
-      "readOnly": true
+      "readOnly": true,
+      "ui:widget": "hidden"
     },
     "ttlock_client_id": {
-      "description": "TTLock API client ID",
+      "title": "Client ID",
+      "description": "TTLock Open Platform application client ID (https://euopen.ttlock.com)",
       "type": "string"
     },
     "ttlock_client_secret": {
-      "description": "TTLock API client secret",
-      "type": "string"
+      "title": "Client secret",
+      "description": "TTLock Open Platform application client secret",
+      "type": "string",
+      "ui:widget": "password"
     },
     "ttlock_username": {
-      "description": "TTLock account username",
+      "title": "Username",
+      "description": "TTLock account username (recommended: the plugin logs in and renews the token automatically)",
       "type": "string"
     },
     "ttlock_password": {
+      "title": "Password",
       "description": "TTLock account password",
-      "type": "string"
+      "type": "string",
+      "ui:widget": "password"
     },
     "ttlock_access_token": {
-      "description": "TTLock API access token",
-      "type": "string"
+      "title": "Access token",
+      "description": "Alternative to username/password: a pre-generated access token (it cannot be renewed automatically)",
+      "type": "string",
+      "ui:widget": "password"
     },
     "ttlock_api_base_url": {
-      "description": "TTLock API base URL",
+      "title": "API base URL",
+      "description": "TTLock API base URL, e.g. https://api.sciener.com or https://euapi.ttlock.com",
       "type": "string",
       "default": "https://api.sciener.com"
     },
+    "refreshInterval": {
+      "title": "Refresh interval",
+      "description": "How often (in seconds) to refresh lock state and battery level. Minimum 30, 0 disables polling.",
+      "type": "number",
+      "default": 300
+    },
+    "whiteList": {
+      "description": "Only expose locks with these names or IDs (empty exposes all)",
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
+    "blackList": {
+      "description": "Never expose locks with these names or IDs",
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
     "debug": {
-      "description": "Enable the debug for the plugin (development only)",
+      "description": "Enable debug logging for the plugin",
       "type": "boolean",
       "default": false
     },
