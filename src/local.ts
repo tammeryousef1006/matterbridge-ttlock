@@ -47,6 +47,7 @@ interface StoredKey {
 }
 
 const HISTORY_RETRY_MS = 120_000;
+const SILENT_AFTER_MS = 120_000;
 const MAX_SEEN_RECORDS = 300;
 
 function storeKey(key: BleKey): StoredKey {
@@ -63,6 +64,8 @@ export class LocalController {
   private readonly lockIdsByMac = new Map<string, number>();
   private readonly lastAdvertisement = new Map<string, LockAdvertisement>();
   private readonly lastSeenAt = new Map<string, number>();
+  private readonly silentSince = new Map<string, number>();
+  private watchdog: NodeJS.Timeout | undefined;
   private readonly historyBusy = new Set<string>();
   private readonly historyAttemptAt = new Map<string, number>();
   private seenRecords: Record<string, number[]> = {};
@@ -115,9 +118,25 @@ export class LocalController {
       }, 60_000).unref?.();
     });
     this.proxy.start();
+
+    // A lock that is connected to something (or out of range) stops broadcasting; say so once.
+    this.watchdog = setInterval(() => {
+      if (!this.proxy?.ready) return;
+      for (const [mac, lockId] of this.lockIdsByMac) {
+        const lastSeen = this.lastSeenAt.get(mac);
+        if (lastSeen === undefined || this.silentSince.has(mac) || Date.now() - lastSeen < SILENT_AFTER_MS) continue;
+        this.silentSince.set(mac, lastSeen);
+        this.log.info(
+          `No Bluetooth broadcasts from lock ${lockId} for ${Math.round((Date.now() - lastSeen) / 1000)}s. The lock may still be connected to the ESP32 or another device (TTLock app, gateway), or be out of range.`,
+        );
+      }
+    }, 30_000);
+    this.watchdog.unref?.();
   }
 
   stop(): void {
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = undefined;
     this.proxy?.stop();
     this.proxy = undefined;
   }
@@ -228,8 +247,17 @@ export class LocalController {
       this.advertisementSeen.add(mac);
       this.log.info(`The ESP32 can see lock ${lockId} (signal ${adv.rssi ?? '?'} dBm).`);
     }
+    if (this.silentSince.has(mac)) {
+      this.log.info(`Lock ${lockId} is broadcasting over Bluetooth again (it was silent for ${Math.round((Date.now() - this.silentSince.get(mac)!) / 1000)}s).`);
+      this.silentSince.delete(mac);
+    }
     const previous = this.lastAdvertisement.get(mac);
     this.lastAdvertisement.set(mac, decoded);
+    if (!previous || previous.locked !== decoded.locked || previous.dormant !== decoded.dormant || previous.hasNewRecords !== decoded.hasNewRecords) {
+      this.log.debug(
+        `Bluetooth broadcast from lock ${lockId}: ${decoded.dormant ? 'dormant' : decoded.locked ? 'locked' : 'unlocked'}, battery ${decoded.battery}%${decoded.hasNewRecords ? ', new records' : ''}.`,
+      );
+    }
     if (!previous || previous.locked !== decoded.locked || previous.battery !== decoded.battery || previous.hasNewRecords !== decoded.hasNewRecords) {
       this.callbacks.onAdvertisement(lockId, decoded);
     }

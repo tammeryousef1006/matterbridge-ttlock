@@ -192,25 +192,14 @@ test('reads who/how from the lock history when it reports new records (opt-in)',
   }
 });
 
-test('uses the proxy service cache when supported, and rediscovers if it is stale', async () => {
-  const { brain, fake, local } = await setup({ featureFlags: 4 | 2 | 1, staleCache: true });
-  try {
-    await new Promise((r) => setTimeout(r, 300)); // device info arrives after connecting
-    await local.control(7, 'unlock', 10000);
-    assert.deepEqual(fake.connectTypes, ['cache', 'fresh']);
-    assert.deepEqual(brain.log, ['unlock']);
-  } finally {
-    local.stop();
-    await fake.stop();
-  }
-});
-
-test('does not ask for the cache when the proxy lacks it', async () => {
-  const { fake, local } = await setup({ featureFlags: 2 | 1 });
+test('always connects with a fresh service discovery, even when the proxy offers caching', async () => {
+  const { fake, local } = await setup({ featureFlags: 4 | 2 | 1 });
   try {
     await new Promise((r) => setTimeout(r, 300));
     await local.control(7, 'unlock', 10000);
-    assert.deepEqual(fake.connectTypes, ['fresh']);
+    await waitFor(() => !fake.deviceConnected, 'the disconnect');
+    await local.control(7, 'lock', 10000);
+    assert.deepEqual(fake.connectTypes, ['fresh', 'fresh']);
   } finally {
     local.stop();
     await fake.stop();
@@ -226,6 +215,19 @@ test('reports success before the Bluetooth disconnect has finished', async () =>
     // The next command waits for the previous session to close, then works.
     await local.control(7, 'lock', 10000);
     assert.deepEqual(brain.log, ['unlock', 'lock']);
+  } finally {
+    local.stop();
+    await fake.stop();
+  }
+});
+
+test('gives up within the time budget when the lock never answers', async () => {
+  const { fake, local } = await setup({ ignoreConnects: true, ignoreDisconnects: true });
+  try {
+    const started = Date.now();
+    await assert.rejects(local.control(7, 'unlock', 10000), /could not connect/);
+    const took = Date.now() - started;
+    assert.ok(took < 11500, `took ${took}ms`);
   } finally {
     local.stop();
     await fake.stop();

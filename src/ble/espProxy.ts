@@ -279,10 +279,12 @@ export class EspProxy extends EventEmitter implements BleCentral {
     if (addressType !== undefined) this.addressTypes.set(normalizeMac(mac), addressType);
   }
 
-  async connectDevice(mac: string, timeoutMs: number, useCache = false): Promise<void> {
+  async connectDevice(mac: string, timeoutMs: number, _useCache = false): Promise<void> {
     const connection = this.requireConnection();
     const response: AnyMessage = await withTimeout(
-      connection.connectBluetoothDeviceService(macToNumber(mac), this.addressTypes.get(normalizeMac(mac)), useCache && this.remoteCaching),
+      // Cached connections (CONNECT_V3_WITH_CACHE) left TTLock sessions hanging on real
+      // hardware in 1.4.0-beta.2, so always connect with a fresh service discovery.
+      connection.connectBluetoothDeviceService(macToNumber(mac), this.addressTypes.get(normalizeMac(mac)), false),
       timeoutMs,
       'connecting to the lock',
     );

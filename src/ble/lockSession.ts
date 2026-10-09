@@ -124,8 +124,9 @@ export class LockSession {
       } catch (error) {
         lastError = error as Error;
         this.log.debug(`${this.label}: Bluetooth connect attempt ${attempt} failed: ${lastError.message}`);
-        await this.central.disconnectDevice(mac);
-        await sleep(300);
+        // Cancel the pending connection on the proxy, but don't let that eat the time budget.
+        await Promise.race([this.central.disconnectDevice(mac), sleep(1000)]);
+        await sleep(200);
       }
     }
     if (lastError) throw new BleLockError(`could not connect over Bluetooth: ${lastError.message}`);

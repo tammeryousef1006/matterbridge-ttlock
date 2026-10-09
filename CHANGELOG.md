@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0-beta.3 (2026-10-09)
+- Reverted the ESP32 service cache from beta.2: on real hardware it left Bluetooth connections hanging, so commands timed out and the lock stopped broadcasting its state
+- Faster fallback in `auto` mode: a failed Bluetooth attempt no longer waits for the disconnect confirmation, so the cloud takes over after about 10 seconds
+- Logs when a lock stops broadcasting over Bluetooth (for example because something is still connected to it) and when it comes back
+
 ## 1.4.0-beta.2 (2026-10-09)
 - Faster Bluetooth lock/unlock: the command is reported done as soon as the lock confirms (the Bluetooth disconnect finishes afterwards), and the ESP32's GATT service cache is used when the proxy supports it (with automatic rediscovery if the cache is stale)
 - Battery: values are only written when they change, and the lock's Bluetooth reading is preferred over the cloud's when the ESP32 can see the lock (no more 88% / 80% flip-flopping or repeated log lines)

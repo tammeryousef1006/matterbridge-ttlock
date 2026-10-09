@@ -57,7 +57,7 @@ const LOW_BATTERY_PERCENT = 20;
 const CRITICAL_BATTERY_PERCENT = 10;
 const DEFAULT_WEBHOOK_PORT = 8090;
 const OWN_COMMAND_WINDOW_MS = 20_000;
-const LOCAL_BUDGET_AUTO_MS = 12_000;
+const LOCAL_BUDGET_AUTO_MS = 10_000;
 const LOCAL_BUDGET_LOCAL_MS = 30_000;
 /** A lock heard over Bluetooth this recently doesn't need its state polled from the cloud. */
 const LOCAL_FRESH_MS = 10 * 60_000;
