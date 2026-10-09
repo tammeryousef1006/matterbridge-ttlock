@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0-beta.4 (2026-10-09)
+- Webhook: records of the plugin's own commands (the cloud reports them as "app" a few seconds later) are ignored, and a record older than the current state (for example a fingerprint unlock after which the lock already auto-locked) still sends the Matter event but no longer rolls the lock state back
+- Diagnostics at info level for the beta: each change in the lock's Bluetooth broadcast (with the raw data), each webhook record, and the timing of every Bluetooth command
+
 ## 1.4.0-beta.3 (2026-10-09)
 - Reverted the ESP32 service cache from beta.2: on real hardware it left Bluetooth connections hanging, so commands timed out and the lock stopped broadcasting its state
 - Faster fallback in `auto` mode: a failed Bluetooth attempt no longer waits for the disconnect confirmation, so the cloud takes over after about 10 seconds

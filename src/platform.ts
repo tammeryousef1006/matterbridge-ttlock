@@ -47,6 +47,8 @@ interface TTLockDevice {
   endpoint: MatterbridgeEndpoint;
   /** When we last sent a lock/unlock, to tell our own changes from someone at the door. */
   lastCommandAt: number;
+  /** When the known lock state last changed (by any source), to ignore older records. */
+  lastStateAt: number;
   relockTimer?: NodeJS.Timeout;
 }
 
@@ -57,6 +59,8 @@ const LOW_BATTERY_PERCENT = 20;
 const CRITICAL_BATTERY_PERCENT = 10;
 const DEFAULT_WEBHOOK_PORT = 8090;
 const OWN_COMMAND_WINDOW_MS = 20_000;
+/** Cloud records of our own commands can arrive this late. */
+const OWN_RECORD_WINDOW_MS = 60_000;
 const LOCAL_BUDGET_AUTO_MS = 10_000;
 const LOCAL_BUDGET_LOCAL_MS = 30_000;
 /** A lock heard over Bluetooth this recently doesn't need its state polled from the cloud. */
@@ -232,7 +236,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
       .createDefaultDoorLockClusterServer(DoorLock.LockState.Locked, DoorLock.LockType.DeadBolt)
       .createDefaultPowerSourceReplaceableBatteryClusterServer(battery ?? 100, chargeLevel(battery), 6000, 'AA', 4);
 
-    const device: TTLockDevice = { lock, name, endpoint, lastCommandAt: 0 };
+    const device: TTLockDevice = { lock, name, endpoint, lastCommandAt: 0, lastStateAt: 0 };
 
     endpoint.addCommandHandler('identify', ({ request }) => {
       this.log.info(`Identify request for ${name}: ${JSON.stringify(request)}`);
@@ -266,7 +270,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
       this.log.info(`${verb} ${name} over Bluetooth...`);
       try {
         await this.local.control(lock.lockId, action, mode === 'local' ? LOCAL_BUDGET_LOCAL_MS : LOCAL_BUDGET_AUTO_MS);
-        device.lastCommandAt = Date.now();
+        device.lastCommandAt = device.lastStateAt = Date.now();
         this.log.info(`${name} ${done} over Bluetooth.`);
         return;
       } catch (error) {
@@ -286,7 +290,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     try {
       if (action === 'lock') await this.api.lock(lock.lockId);
       else await this.api.unlock(lock.lockId);
-      device.lastCommandAt = Date.now();
+      device.lastCommandAt = device.lastStateAt = Date.now();
       this.log.info(`${name} ${done}.`);
     } catch (error) {
       this.log.error(`Failed to ${action} ${name}: ${errorMessage(error)}`);
@@ -302,6 +306,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     if (device.relockTimer) clearTimeout(device.relockTimer);
     device.relockTimer = undefined;
     this.log.info(`${device.name} is now ${locked ? 'locked' : 'unlocked'}${how}.`);
+    device.lastStateAt = Date.now();
     await device.endpoint.setAttribute(DoorLock.Cluster.id, 'lockState', lockState, device.endpoint.log);
     return true;
   }
@@ -323,17 +328,26 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
   }
 
   /** Apply a lock/unlock record (from the webhook or the lock history). */
-  private async applyRecord(device: TTLockDevice, info: RecordInfo, who: string | undefined): Promise<void> {
+  private async applyRecord(device: TTLockDevice, info: RecordInfo, who: string | undefined, happenedAt?: number): Promise<void> {
     if (!info.operation) return;
     const label = METHOD_LABELS[info.method];
     const by = `${label}${who ? ` (${who})` : ''}`;
+    // The cloud also reports the plugin's own commands (as "app"/"gateway"), seconds later.
+    if (info.success && ['app', 'gateway', 'remote'].includes(info.method) && Date.now() - device.lastCommandAt < OWN_RECORD_WINDOW_MS) {
+      this.log.info(`${device.name}: record of our own ${info.operation} command, ignored.`);
+      return;
+    }
     if (!info.success) {
       this.log.info(`${device.name}: failed ${info.operation} attempt with ${by}.`);
       await this.emitOperation(device, info.operation, OPERATION_SOURCE[info.method], false);
       return;
     }
-    const changed = await this.setLockState(device, info.operation === 'lock', ` by ${by}`);
-    if (!changed) this.log.info(`${device.name} ${info.operation === 'lock' ? 'locked' : 'unlocked'} by ${by}.`);
+    // A record older than the state we already know (e.g. the lock has auto-locked since)
+    // is still reported as an event, but must not roll the state back.
+    const plausible = happenedAt !== undefined && Math.abs(Date.now() - happenedAt) < 24 * 3600_000;
+    const stale = plausible && happenedAt! < device.lastStateAt - 3000;
+    const changed = stale ? false : await this.setLockState(device, info.operation === 'lock', ` by ${by}`);
+    if (!changed) this.log.info(`${device.name} ${info.operation === 'lock' ? 'locked' : 'unlocked'} by ${by}${stale ? ` ${Math.round((Date.now() - happenedAt!) / 1000)}s ago (state already updated since)` : ''}.`);
     await this.emitOperation(device, info.operation, OPERATION_SOURCE[info.method], true);
     if (info.operation === 'unlock') this.scheduleRelock(device);
   }
@@ -457,6 +471,9 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
       const device =
         (record.lockId !== undefined ? this.devices.get(record.lockId) : undefined) ??
         [...this.devices.values()].find((d) => record.lockMac && d.lock.lockMac && normalizeMac(d.lock.lockMac) === normalizeMac(record.lockMac));
+      this.log.info(
+        `Webhook record: lock ${record.lockId ?? record.lockMac}, type ${record.recordType ?? '-'}/${record.recordTypeFromLock ?? '-'}, ${record.success ? 'success' : 'failed'}${record.username ? `, by ${record.username}` : ''}${record.lockDate ? `, at ${new Date(record.lockDate).toISOString()}` : ''}.`,
+      );
       if (!device) continue;
       if (record.battery !== undefined && !this.local?.seenRecently(device.lock.lockId, LOCAL_FRESH_MS)) await this.updateBattery(device, normalizeBattery(record.battery));
       const info =
@@ -466,7 +483,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         this.log.debug(`${device.name}: webhook record type ${record.recordType}/${record.recordTypeFromLock} (not a lock/unlock).`);
         continue;
       }
-      await this.applyRecord(device, { ...info, success: info.success && record.success }, record.username);
+      await this.applyRecord(device, { ...info, success: info.success && record.success }, record.username, record.lockDate);
     }
   }
 

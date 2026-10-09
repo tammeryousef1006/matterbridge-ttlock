@@ -65,6 +65,7 @@ export class LocalController {
   private readonly lastAdvertisement = new Map<string, LockAdvertisement>();
   private readonly lastSeenAt = new Map<string, number>();
   private readonly silentSince = new Map<string, number>();
+  private readonly lastFlags = new Map<string, number>();
   private watchdog: NodeJS.Timeout | undefined;
   private readonly historyBusy = new Set<string>();
   private readonly historyAttemptAt = new Map<string, number>();
@@ -253,10 +254,13 @@ export class LocalController {
     }
     const previous = this.lastAdvertisement.get(mac);
     this.lastAdvertisement.set(mac, decoded);
-    if (!previous || previous.locked !== decoded.locked || previous.dormant !== decoded.dormant || previous.hasNewRecords !== decoded.hasNewRecords) {
-      this.log.debug(
-        `Bluetooth broadcast from lock ${lockId}: ${decoded.dormant ? 'dormant' : decoded.locked ? 'locked' : 'unlocked'}, battery ${decoded.battery}%${decoded.hasNewRecords ? ', new records' : ''}.`,
+    const flags = adv.data.length > 3 ? adv.data[3] : -1;
+    if (flags !== this.lastFlags.get(mac)) {
+      // Info level during the beta, to learn how real locks report fingerprint/keypad use.
+      this.log.info(
+        `Bluetooth broadcast from lock ${lockId}: ${decoded.dormant ? 'asleep (state unknown)' : decoded.locked ? 'locked' : 'unlocked'}, battery ${decoded.battery}%${decoded.hasNewRecords ? ', has new records' : ''} [flags 0x${flags.toString(16).padStart(2, '0')}, data ${adv.data.toString('hex')}].`,
       );
+      this.lastFlags.set(mac, flags);
     }
     if (!previous || previous.locked !== decoded.locked || previous.battery !== decoded.battery || previous.hasNewRecords !== decoded.hasNewRecords) {
       this.callbacks.onAdvertisement(lockId, decoded);
@@ -286,14 +290,14 @@ export class LocalController {
             else await session.lock();
             resolve();
           } catch (error) {
-            this.log.debug(`Bluetooth ${action} of lock ${lockId} failed after: ${session.timingSummary}`);
+            this.log.info(`Bluetooth ${action} of lock ${lockId} failed after: ${session.timingSummary}`);
             reject(error);
             return;
           } finally {
             await session.close();
           }
           session.mark('disconnect');
-          this.log.debug(`Bluetooth ${action} timing for lock ${lockId}: ${session.timingSummary}`);
+          this.log.info(`Bluetooth ${action} timing for lock ${lockId}: ${session.timingSummary}`);
         })
         .catch(reject);
     });
