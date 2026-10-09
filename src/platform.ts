@@ -18,7 +18,7 @@ import { KeyValueStore, LocalController } from './local.js';
 import { METHOD_LABELS, OperationMethod, RecordInfo, classifyCloudRecord, classifyLockRecord } from './records.js';
 import { TTLockApi, TTLockLock, TTLockOpenState, errorMessage } from './ttlockApi.js';
 import { Mirror, MirrorIndexes, buildMirror, findUser } from './users.js';
-import { CloudRecord, WebhookServer, buildWebhookUrl } from './webhook.js';
+import { CloudRecord, WebhookServer, buildWebhookUrl, toCloudRecord } from './webhook.js';
 
 export type ConnectionMode = 'auto' | 'local' | 'cloud';
 
@@ -66,6 +66,9 @@ interface TTLockDevice {
   lastCommandAt: number;
   /** When the known lock state last changed (by any source), to ignore older records. */
   lastStateAt: number;
+  /** When a "who/how" event was last sent, so one door operation isn't reported twice. */
+  lastDetailAt: number;
+  recordLookup?: NodeJS.Timeout;
   relockTimer?: NodeJS.Timeout;
   /** The TTLock credentials mirrored as Matter users, when enabled. */
   mirror?: Mirror;
@@ -82,6 +85,8 @@ const OWN_COMMAND_WINDOW_MS = 20_000;
 const OWN_RECORD_WINDOW_MS = 60_000;
 /** History is read later than webhooks arrive, so its records of our commands can be older. */
 const OWN_HISTORY_WINDOW_MS = 5 * 60_000;
+/** When to look for the cloud record of an operation seen at the door (time after the previous try). */
+const RECORD_LOOKUP_DELAYS_MS = [5_000, 10_000, 15_000, 30_000];
 /** A lock heard over Bluetooth this recently has its state taken from the broadcasts only. */
 const LIVE_STATE_MS = 2 * 60_000;
 const LOCAL_BUDGET_AUTO_MS = 15_000;
@@ -241,7 +246,10 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     this.refreshTimer = undefined;
     if (this.usersTimer) clearInterval(this.usersTimer);
     this.usersTimer = undefined;
-    for (const device of this.devices.values()) if (device.relockTimer) clearTimeout(device.relockTimer);
+    for (const device of this.devices.values()) {
+      if (device.relockTimer) clearTimeout(device.relockTimer);
+      if (device.recordLookup) clearTimeout(device.recordLookup);
+    }
     this.local?.stop();
     this.local = undefined;
     await this.webhook?.stop();
@@ -305,7 +313,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
       endpoint.createDefaultDoorLockClusterServer(DoorLock.LockState.Locked, DoorLock.LockType.DeadBolt);
     }
 
-    const device: TTLockDevice = { lock, name, endpoint, lastCommandAt: 0, lastStateAt: 0 };
+    const device: TTLockDevice = { lock, name, endpoint, lastCommandAt: 0, lastStateAt: 0, lastDetailAt: 0 };
 
     endpoint.addCommandHandler('identify', ({ request }) => {
       this.log.info(`Identify request for ${name}: ${JSON.stringify(request)}`);
@@ -473,6 +481,9 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
       ? { userIndex: match.user.index, credential: match.credential ? { credentialType: match.credential.type, credentialIndex: match.credential.index } : undefined }
       : undefined;
     if (match) who = match.user.name;
+    // The same operation can arrive from the lock history and from the cloud.
+    if (ownWindowMs === OWN_HISTORY_WINDOW_MS && Date.now() - device.lastDetailAt < 90_000) return;
+    device.lastDetailAt = Date.now();
     const label = METHOD_LABELS[info.method];
     const by = `${label}${who ? ` (${who})` : ''}`;
     // The cloud also reports the plugin's own commands (as "app"/"gateway"), seconds later.
@@ -548,9 +559,47 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     if (adv.locked === undefined) return;
     const changed = await this.setLockState(device, adv.locked, ' (seen over Bluetooth)');
     const ours = Date.now() - device.lastCommandAt < OWN_COMMAND_WINDOW_MS;
-    // Without a source that says who/how, still report that someone operated the lock.
-    const detailed = this.ttlockConfig.webhook?.enabled === true || this.ttlockConfig.localControl?.readLockHistory === true;
-    if (changed && !ours && !detailed) await this.emitOperation(device, adv.locked ? 'lock' : 'unlock', DoorLock.OperationSource.Unspecified, true);
+    if (changed && !ours) this.lookUpRecord(device, adv.locked ? 'lock' : 'unlock');
+  }
+
+  /**
+   * Someone operated the lock at the door. The gateway uploads the record to the TTLock
+   * cloud within seconds, so fetch it to learn who and how; if none turns up, still
+   * report the operation without those details.
+   */
+  private lookUpRecord(device: TTLockDevice, operation: 'lock' | 'unlock'): void {
+    const changedAt = Date.now();
+    if (device.recordLookup) clearTimeout(device.recordLookup);
+    const delays = [...RECORD_LOOKUP_DELAYS_MS];
+    const attempt = async (): Promise<void> => {
+      device.recordLookup = undefined;
+      if (device.lastDetailAt >= changedAt) return;
+      try {
+        const records = (await this.api.listRecords(device.lock.lockId, changedAt - 120_000)).map((r) => toCloudRecord(r, device.lock.lockId));
+        const match = records.find((r) => {
+          if (r.lockDate !== undefined && r.lockDate < changedAt - 90_000) return false;
+          const info = (r.recordTypeFromLock !== undefined ? classifyLockRecord(r.recordTypeFromLock) : undefined) ?? (r.recordType !== undefined ? classifyCloudRecord(r.recordType) : undefined);
+          return info?.operation === operation;
+        });
+        if (match) {
+          await this.onCloudRecords([match], 'cloud history');
+          return;
+        }
+      } catch (error) {
+        this.log.debug(`Could not read the TTLock records of ${device.name}: ${errorMessage(error)}`);
+      }
+      const next = delays.shift();
+      if (next !== undefined) {
+        device.recordLookup = setTimeout(() => void attempt(), next);
+        device.recordLookup.unref?.();
+      } else if (device.lastDetailAt < changedAt) {
+        // No record (e.g. auto-lock, or no gateway): report the operation without details.
+        device.lastDetailAt = Date.now();
+        await this.emitOperation(device, operation, DoorLock.OperationSource.Unspecified, true);
+      }
+    };
+    device.recordLookup = setTimeout(() => void attempt(), delays.shift()!);
+    device.recordLookup.unref?.();
   }
 
   private async onLockRecords(lockId: number, records: LockLogEntry[]): Promise<void> {
@@ -605,7 +654,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     }
   }
 
-  private async onCloudRecords(records: CloudRecord[]): Promise<void> {
+  private async onCloudRecords(records: CloudRecord[], source = 'Webhook'): Promise<void> {
     for (const record of records) {
       const dedupKey = `${record.lockId ?? record.lockMac}:${record.lockDate}:${record.recordType}:${record.recordTypeFromLock}`;
       if (record.lockDate !== undefined) {
@@ -617,7 +666,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         (record.lockId !== undefined ? this.devices.get(record.lockId) : undefined) ??
         [...this.devices.values()].find((d) => record.lockMac && d.lock.lockMac && normalizeMac(d.lock.lockMac) === normalizeMac(record.lockMac));
       this.log.info(
-        `Webhook record: lock ${record.lockId ?? record.lockMac}, type ${record.recordType ?? '-'}/${record.recordTypeFromLock ?? '-'}, ${record.success ? 'success' : 'failed'}${record.username ? `, by ${record.username}` : ''}${record.lockDate ? `, at ${new Date(record.lockDate).toISOString()}` : ''}.`,
+        `${source} record: lock ${record.lockId ?? record.lockMac}, type ${record.recordType ?? '-'}/${record.recordTypeFromLock ?? '-'}, ${record.success ? 'success' : 'failed'}${record.username ? `, by ${record.username}` : ''}${record.lockDate ? `, at ${new Date(record.lockDate).toISOString()}` : ''}.`,
       );
       if (!device) continue;
       if (record.battery !== undefined && !this.local?.seenRecently(device.lock.lockId, LOCAL_FRESH_MS)) await this.updateBattery(device, normalizeBattery(record.battery));

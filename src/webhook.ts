@@ -57,18 +57,23 @@ export function parseCallbackBody(raw: string, contentType: string | undefined):
   const topLockMac = str(body.lockMac);
   return (records as Array<Record<string, unknown>>)
     .filter((r) => r && typeof r === 'object')
-    .map((r) => ({
-      lockId: num(r.lockId) ?? topLockId,
-      lockMac: str(r.lockMac) ?? topLockMac,
-      recordType: num(r.recordType),
-      recordTypeFromLock: num(r.recordTypeFromLock),
-      success: r.success === undefined ? true : Number(r.success) === 1 || r.success === true,
-      username: str(r.username),
-      keyboardPwd: str(r.keyboardPwd),
-      lockDate: num(r.lockDate),
-      battery: num(r.electricQuantity),
-    }))
+    .map((r) => toCloudRecord(r, topLockId, topLockMac))
     .filter((r) => r.lockId !== undefined || r.lockMac !== undefined);
+}
+
+/** A lock record as the TTLock cloud sends it (callback or /v3/lockRecord/list). */
+export function toCloudRecord(r: Record<string, unknown>, lockId?: number, lockMac?: string): CloudRecord {
+  return {
+    lockId: num(r.lockId) ?? lockId,
+    lockMac: str(r.lockMac) ?? lockMac,
+    recordType: num(r.recordType),
+    recordTypeFromLock: num(r.recordTypeFromLock),
+    success: r.success === undefined ? true : Number(r.success) === 1 || r.success === true,
+    username: str(r.username),
+    keyboardPwd: str(r.keyboardPwd),
+    lockDate: num(r.lockDate),
+    battery: num(r.electricQuantity),
+  };
 }
 
 export function buildWebhookUrl(publicUrl: string, token: string): string {

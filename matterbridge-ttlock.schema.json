@@ -169,7 +169,7 @@
         },
         "readLockHistory": {
           "title": "Read who/how from the lock history",
-          "description": "After someone uses the lock, briefly connect over Bluetooth to read how it was opened (fingerprint, card, passcode...). Uses a little more battery, and the lock may then not upload those records to the TTLock app history. Not needed if the webhook is enabled.",
+          "description": "Usually not needed: when the ESP32 sees someone open the lock, the plugin already fetches who/how from the TTLock cloud a few seconds later (your gateway uploads it). This option instead reads the lock's own history over Bluetooth, for locks without a gateway. With a gateway it often loses the race (the gateway collects the records first) and keeps the lock busy, so leave it off.",
           "type": "boolean",
           "default": false
         }

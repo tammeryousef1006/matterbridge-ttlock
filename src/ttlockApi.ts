@@ -287,6 +287,12 @@ export class TTLockApi {
     return all;
   }
 
+  /** Recent operation records the gateway uploaded to the cloud (newest first). */
+  async listRecords(lockId: number, sinceMs: number): Promise<Array<Record<string, unknown>>> {
+    const data = await this.call<TTLockListResponse>('get', '/v3/lockRecord/list', { lockId, startDate: Math.floor(sinceMs), endDate: Date.now() + 60_000, pageNo: 1, pageSize: 20 });
+    return data.list ?? [];
+  }
+
   /** Query the current open state. Requires the lock to be connected to a gateway. */
   async queryOpenState(lockId: number): Promise<TTLockOpenState> {
     const data = await this.call<TTLockOpenStateResponse>('get', '/v3/lock/queryOpenState', { lockId });

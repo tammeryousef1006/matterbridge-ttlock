@@ -83,7 +83,7 @@ With an ESP32 running an [ESPHome Bluetooth proxy](https://esphome.io/components
 
 - see the lock state and battery **instantly** from the lock's Bluetooth broadcasts, including fingerprint/keypad unlocks and auto-lock, without draining the battery
 - lock and unlock **directly over Bluetooth**, without the internet or a TTLock gateway
-- optionally read **who/how** from the lock's own history (**Read who/how from the lock history**)
+- learn **who and how** (fingerprint, card, passcode...): when the ESP32 sees someone open the lock, the plugin fetches the record your gateway uploaded to the TTLock cloud a few seconds later. Without a gateway, **Read who/how from the lock history** reads it from the lock over Bluetooth instead (leave it off when you have a gateway: the gateway collects the records first and keeps the lock busy)
 
 **Connection mode:**
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0-beta.7 (2026-10-09)
+- Who/how without a webhook: when the ESP32 sees the lock opened or locked by someone at the door, the plugin fetches the matching record from the TTLock cloud (uploaded by the gateway) a few seconds later, logs "unlocked by fingerprint (Tamer)" and sends the Matter event with the user. If no record turns up within a minute (e.g. auto-lock), the operation is still reported without details.
+- The same operation from the lock history and the cloud is only reported once
+- "Read who/how from the lock history" is now described as for locks without a gateway
+
 ## 1.4.0-beta.6 (2026-10-09)
 - **Lock users (optional, read-only):** the fingerprints, cards and passcodes from the TTLock app appear as Matter lock users (grouped by name, expired ones disabled, refreshed every 15 minutes). Lock events name the person ("unlocked by fingerprint (Tamer)") and carry the Matter user and credential. Adding or removing users/codes from a controller is refused.
 - README: ESP32 scan settings to listen continuously, so short fingerprint/keypad broadcasts are not missed
