@@ -1,0 +1,102 @@
+{
+ "aes": [
+  {
+   "plain": "534349454e4552",
+   "cipher": "3a7405449ad87c24efa3ebca9ea97370"
+  },
+  {
+   "plain": "",
+   "cipher": "07feef74e1d5036e900eee118e949293"
+  },
+  {
+   "plain": "00000000000000000000000000000000",
+   "cipher": "0a940bb5416ef045f1c39458c653ea5ad172ce43bf147f4dffa206c1d372ddca"
+  },
+  {
+   "plain": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627",
+   "cipher": "c6a13b37878f5b826f4f8162a1c8d87935d9dcdb829fec3352e7bf10b84be4a5bc0006c13eeaa2782aec385aba82e5da"
+  }
+ ],
+ "crc": [
+  {
+   "data": "",
+   "crc": 0
+  },
+  {
+   "data": "7f5a0503",
+   "crc": 62
+  },
+  {
+   "data": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031",
+   "crc": 118
+  }
+ ],
+ "codec": {
+  "in": "c80d4d0509fa21",
+  "out": "34f1b1f9f506"
+ },
+ "password": {
+  "field": "MjQxLDI0MiwyNDMsMjQ0LDI0NSwyNDYsMjQ3LDI0OCwyNDksOTI=",
+  "plain": "123456789"
+ },
+ "aeskey": {
+  "csv": "00,01,02,03,04,05,06,07,08,09,0a,0b,0c,0d,0e,0f",
+  "hex": "000102030405060708090a0b0c0d0e0f"
+ },
+ "frame_check_user_time": "7f5a0503020001000755aa202c8d78764a76a6688bdde735ef9e622b52b745ca1ff32d0ec6f7929c82896619380d0a",
+ "payload_check_user_time": "0001311400991130140000000000000000",
+ "payload_unlock": "0001e2306553f100",
+ "frame_query_state": "7f5a0503020001000714aa103a7405449ad87c24efa3ebca9ea97370740d0a",
+ "payload_operate_log": "ffff",
+ "response_frame": "7f5a0503020001000754021012b40c2cce24412c958129ad7bb13a40ae0d0a",
+ "response_parsed": [
+  "550112345678"
+ ],
+ "ps_from_lock": 305419896,
+ "operate_log": {
+  "plain": "25010064002a0e141a0a090e1e055800000102a3b40d041a0a090e1f00570431323334",
+  "last": 42,
+  "entries": [
+   {
+    "record_number": 41,
+    "type": 20,
+    "date": "2026-10-09T14:30:05",
+    "battery": 88,
+    "password": "16950196"
+   },
+   {
+    "record_number": 40,
+    "type": 4,
+    "date": "2026-10-09T14:31:00",
+    "battery": 87,
+    "password": "1234"
+   }
+  ]
+ },
+ "adv": [
+  {
+   "raw": "050302014c00000000aabbccddeeff",
+   "state": 1,
+   "records": false,
+   "dormant": false,
+   "battery": 76,
+   "mac": "FF:EE:DD:CC:BB:AA"
+  },
+  {
+   "raw": "050302124c00000000aabbccddeeff",
+   "state": null,
+   "records": true,
+   "dormant": true,
+   "battery": 76,
+   "mac": "FF:EE:DD:CC:BB:AA"
+  },
+  {
+   "raw": "050302004c00000000aabbccddeeff",
+   "state": 0,
+   "records": false,
+   "dormant": false,
+   "battery": 76,
+   "mac": "FF:EE:DD:CC:BB:AA"
+  }
+ ]
+}

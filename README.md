@@ -12,6 +12,9 @@ A Matterbridge plugin for controlling TTLock smart locks via the TTLock API. Thi
 - Lock state refreshed periodically, so changes made with the TTLock app, keypad or key are reflected in Matter
 - Username/password authentication with automatic token renewal, or a static access token
 - Choose which locks to expose with a whitelist/blacklist
+- **Optional webhook:** the TTLock cloud reports fingerprint, card, passcode and key use in real time, including who and how
+- **Optional local control:** lock/unlock over Bluetooth through an ESP32 (ESPHome Bluetooth proxy), with instant state updates and a cloud fallback
+- **Optional lock users:** your fingerprints, cards and passcodes appear as Matter lock users, and lock events say who opened the door
 
 ## Prerequisites
 
@@ -46,9 +49,89 @@ Open the plugin config in the frontend.
 | `refreshInterval` | Number | No | Seconds between lock state and battery refreshes (default `300`, minimum `30`, `0` disables) |
 | `whiteList` | String[] | No | Only expose locks with these names or IDs |
 | `blackList` | String[] | No | Never expose locks with these names or IDs |
+| `showLockUsers` | Boolean | No | Show fingerprints, cards and passcodes as Matter lock users (read-only, default `false`) |
 | `debug` | Boolean | No | Enable debug logging |
 
 \* Either username/password OR access_token must be provided. Username/password is recommended because the plugin can then renew the token on its own; a static access token stops working when it expires.
+
+The **Webhook** and **Local control** sections are optional and off by default. Without them the plugin works exactly as before (cloud only), with no extra errors or warnings.
+
+## Lock users (read-only)
+
+Turn on **Show lock users in Matter** to mirror the fingerprints, cards and passcodes registered in the TTLock app as Matter lock users:
+
+- Credentials with the same name become one user: a fingerprint named "Tamer" and a card named "Tamer" are the user *Tamer* with two credentials. Unnamed credentials each get their own user. Matter allows 10 characters per name, so longer names are shortened.
+- Expired credentials show as a disabled user.
+- Lock events name the person: *"unlocked by fingerprint (Tamer)"*, and the Matter *lock operation* event carries the user, so controllers that support it can show who opened the door.
+- The list is refreshed from the TTLock cloud at start and every 15 minutes.
+- **Read-only:** adding or removing users or codes from a Matter controller is refused. Manage them in the TTLock app; fingerprints have to be enrolled at the lock anyway.
+
+Controller support varies: Home Assistant can show the user in lock events. SmartThings currently shows only its own members/guests under *Manage users* and plain *Locked/Unlocked* in its history (adding guests or codes there is refused, since the mirror is read-only). Apple Home and Google Home ignore lock users; lock/unlock works the same everywhere. Turning the option on or off changes the lock's Matter features, so your controller may need to refresh or re-add the device.
+
+## Webhook (real-time records from the TTLock cloud)
+
+Without the webhook, the plugin only learns about changes made at the door (fingerprint, card, passcode, key) by polling the cloud every `refreshInterval` seconds, and a quick unlock that auto-locks again is often missed. With the webhook, the TTLock cloud notifies the plugin within seconds, including how the lock was opened and by whom. The lock state is updated and a Matter *lock operation* event is sent (Home Assistant and some other controllers can show it or use it in automations).
+
+1. Make the webhook port (default `8090`) reachable **from the internet**, for example with a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), ngrok or Tailscale Funnel pointing at `http://<matterbridge-ip>:8090`. A local address such as `http://192.168.1.10:8090` does **not** work: the TTLock servers have to reach it.
+2. In the plugin settings, open **Webhook**: turn on **Enable webhook** and fill in **Public URL** with your internet address (for example `https://lock.example.com`).
+3. Save and restart. The plugin shows the full URL (with a secret code) in **Your webhook URL** and in the log.
+4. Paste that URL as the **callback URL** of your application on the [TTLock Open Platform](https://euopen.ttlock.com).
+
+## Local control (Bluetooth through an ESP32)
+
+With an ESP32 running an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html) within Bluetooth range of the lock, the plugin can:
+
+- see the lock state and battery **instantly** from the lock's Bluetooth broadcasts, including fingerprint/keypad unlocks and auto-lock, without draining the battery
+- lock and unlock **directly over Bluetooth**, without the internet or a TTLock gateway
+- learn **who and how** (fingerprint, card, passcode...): when the ESP32 sees someone open the lock, the plugin fetches the record your gateway uploaded to the TTLock cloud a few seconds later. Without a gateway, **Read who/how from the lock history** reads it from the lock over Bluetooth instead (leave it off when you have a gateway: the gateway collects the records first and keeps the lock busy)
+
+**Connection mode:**
+
+| Mode | Lock/unlock |
+|------|-------------|
+| `auto` (default) | Bluetooth first; if that fails within a few seconds, through the cloud |
+| `local` | Bluetooth only |
+| `cloud` | Cloud only (the ESP32 is ignored) |
+
+Local control is only active when **ESP32 address** is filled in.
+
+### Setting up the ESP32
+
+The ESP32 must be **dedicated to this plugin**. An ESPHome Bluetooth proxy serves Bluetooth to only one client at a time, so **remove the ESP32 from Home Assistant** (delete the ESPHome device there, or at least disable it) and stop any Home Assistant integration that uses it for the lock. Example ESPHome configuration:
+
+```yaml
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+api:
+  encryption:
+    key: "<base64 key>"   # put the same key in the plugin settings
+
+bluetooth_proxy:
+  active: true            # required to connect to the lock
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 1100ms      # listen continuously, so short "unlocked" broadcasts
+    window: 1100ms        # (fingerprint, keypad) are not missed
+```
+
+The ESPHome defaults only listen for Bluetooth part of the time, which can delay or miss a quick fingerprint unlock; the `interval`/`window` values above make the ESP32 listen all the time (as ESPHome's ready-made Bluetooth proxy firmware does).
+
+In the plugin settings, fill in **ESP32 address**, and **ESP32 API encryption key** if your ESPHome configuration has one.
+
+### Bluetooth keys
+
+Each lock needs its Bluetooth keys. The plugin tries these sources in order:
+
+1. **Bluetooth keys (JSON)** pasted in the settings. If you used the Home Assistant *TTLock BLE* integration, you can copy the `keys` of its entry from Home Assistant's `.storage/core.config_entries`.
+2. The `lockData` the TTLock API returns (experimental; the log says whether it worked for your lock).
+3. **Get Bluetooth keys from the TTLock account** (on by default): the plugin logs in to the TTLock app service with the username/password above and downloads the keys, like the TTLock app does. The first time, TTLock may email a verification code: the log tells you, enter it in **Verification code**, save and restart. The keys are then remembered.
+
+Locks without a key keep working through the cloud.
 
 ## Usage
 
@@ -76,6 +159,13 @@ If the plugin loads but cannot discover devices:
 - Verify your TTLock API credentials
 - Check your internet connection
 - Ensure your TTLock account has API access enabled
+
+### Local control
+
+- *"The ESP32 proxy has not sent any Bluetooth advertisements"*: Home Assistant (or another client) is still using the ESP32. Remove it there.
+- *"refused the connection ... encryption key"*: the **ESP32 API encryption key** doesn't match the ESPHome configuration.
+- *"could not connect over Bluetooth"*: move the ESP32 closer to the lock, and check `bluetooth_proxy: active: true`.
+- *"the lock refused to unlock"* or *"did not answer"*: the Bluetooth key is wrong or outdated (for example after the lock was reset). Remove the pasted keys or let the plugin download them again.
 
 ### Lock/unlock fails or the state never changes
 
@@ -112,6 +202,10 @@ npm pack
 If this plugin is useful to you, you can support its development:
 
 <a href="https://buymeacoffee.com/6sjde6vkzl"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy me a coffee"></a>
+
+## Credits
+
+The Bluetooth protocol support is ported from the MIT-licensed [`ttlock-ble`](https://github.com/roquerodrigo/ttlock-ble) library by Rodrigo Roque.
 
 ## License
 

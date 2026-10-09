@@ -28,6 +28,8 @@ export interface TTLockLock {
   hasGateway?: number;
   firmwareRevision?: string;
   modelNum?: string;
+  /** Auto-lock delay in seconds (0 or negative when off). */
+  autoLockTime?: number;
 }
 
 /** Lock open state as reported by /v3/lock/queryOpenState. */
@@ -63,6 +65,36 @@ interface TTLockOpenStateResponse extends TTLockBaseResponse {
 }
 
 /** Error codes TTLock returns when the access token is invalid or expired. */
+interface TTLockListResponse extends TTLockBaseResponse {
+  list?: Array<Record<string, unknown>>;
+  pages?: number;
+}
+
+/** A fingerprint, card or passcode registered on a lock. */
+export interface TTLockCredential {
+  kind: 'fingerprint' | 'card' | 'passcode';
+  /** TTLock's id of the credential. */
+  id: number;
+  /** Fingerprint number, card number or passcode digits (as reported by the lock history). */
+  value?: string;
+  name: string;
+  startDate?: number;
+  endDate?: number;
+}
+
+function credential(kind: TTLockCredential['kind'], id: unknown, value: unknown, name: unknown, startDate: unknown, endDate: unknown): TTLockCredential | undefined {
+  const numericId = Number(id);
+  if (!Number.isFinite(numericId)) return undefined;
+  return {
+    kind,
+    id: numericId,
+    value: value === undefined || value === null || value === '' ? undefined : String(value),
+    name: typeof name === 'string' ? name.trim() : '',
+    startDate: Number(startDate) || undefined,
+    endDate: Number(endDate) || undefined,
+  };
+}
+
 const TOKEN_ERROR_CODES = new Set([10003, 10004]);
 /** Refresh the token this long before it actually expires. */
 const TOKEN_EXPIRY_MARGIN_MS = 24 * 60 * 60 * 1000;
@@ -216,6 +248,49 @@ export class TTLockApi {
 
   async unlock(lockId: number): Promise<void> {
     await this.call('post', '/v3/lock/unlock', { lockId });
+  }
+
+  /**
+   * The lock's credentials (fingerprints, cards and passcodes) from the official API.
+   * A type the account can't list (or that the lock doesn't support) is returned empty.
+   */
+  async listCredentials(lockId: number): Promise<TTLockCredential[]> {
+    const sources: Array<{ kind: TTLockCredential['kind']; path: string; map: (item: Record<string, unknown>) => TTLockCredential | undefined }> = [
+      {
+        kind: 'fingerprint',
+        path: '/v3/fingerprint/list',
+        map: (i) => credential('fingerprint', i.fingerprintId, i.fingerprintNumber, i.fingerprintName, i.startDate, i.endDate),
+      },
+      { kind: 'card', path: '/v3/identityCard/list', map: (i) => credential('card', i.cardId, i.cardNumber, i.cardName, i.startDate, i.endDate) },
+      {
+        kind: 'passcode',
+        path: '/v3/lock/listKeyboardPwd',
+        map: (i) => credential('passcode', i.keyboardPwdId, i.keyboardPwd, i.keyboardPwdName, i.startDate, i.endDate),
+      },
+    ];
+    const all: TTLockCredential[] = [];
+    for (const source of sources) {
+      try {
+        for (let pageNo = 1; pageNo <= 20; pageNo++) {
+          const data = await this.call<TTLockListResponse>('get', source.path, { lockId, pageNo, pageSize: PAGE_SIZE });
+          const list = data.list ?? [];
+          for (const item of list) {
+            const c = source.map(item);
+            if (c) all.push(c);
+          }
+          if (pageNo >= (data.pages ?? 1) || list.length === 0) break;
+        }
+      } catch (error) {
+        this.log.debug(`Could not list ${source.kind}s of lock ${lockId}: ${errorMessage(error)}`);
+      }
+    }
+    return all;
+  }
+
+  /** Recent operation records the gateway uploaded to the cloud (newest first). */
+  async listRecords(lockId: number, sinceMs: number): Promise<Array<Record<string, unknown>>> {
+    const data = await this.call<TTLockListResponse>('get', '/v3/lockRecord/list', { lockId, startDate: Math.floor(sinceMs), endDate: Date.now() + 60_000, pageNo: 1, pageSize: 20 });
+    return data.list ?? [];
   }
 
   /** Query the current open state. Requires the lock to be connected to a gateway. */
