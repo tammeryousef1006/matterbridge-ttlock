@@ -48,6 +48,7 @@ interface StoredKey {
 
 const HISTORY_RETRY_MS = 120_000;
 const SILENT_AFTER_MS = 120_000;
+const HISTORY_AFTER_COMMAND_MS = 30_000;
 const MAX_SEEN_RECORDS = 300;
 
 function storeKey(key: BleKey): StoredKey {
@@ -66,6 +67,8 @@ export class LocalController {
   private readonly lastSeenAt = new Map<string, number>();
   private readonly silentSince = new Map<string, number>();
   private readonly lastFlags = new Map<string, number>();
+  private readonly lastControlAt = new Map<string, number>();
+  private historyAbort: AbortController | undefined;
   private watchdog: NodeJS.Timeout | undefined;
   private readonly historyBusy = new Set<string>();
   private readonly historyAttemptAt = new Map<string, number>();
@@ -271,26 +274,29 @@ export class LocalController {
   // ---- commands -----------------------------------------------------------
 
   /** Lock or unlock over Bluetooth within `budgetMs`. Throws if it could not be done. */
-  async control(lockId: number, action: 'lock' | 'unlock', budgetMs: number): Promise<void> {
+  async control(lockId: number, action: 'lock' | 'unlock', budgetMs: number, signal?: AbortSignal): Promise<void> {
     const mac = this.macOf(lockId);
     const key = mac ? this.keys.get(mac) : undefined;
     if (!mac || !key) throw new BleLockError('no Bluetooth key for this lock');
     const proxy = this.proxy;
     if (!proxy?.ready) throw new BleLockError('the ESP32 Bluetooth proxy is not connected');
+    // Commands have priority over a background history read.
+    this.historyAbort?.abort();
+    this.lastControlAt.set(mac, Date.now());
     const deadline = Date.now() + budgetMs;
     // Report success as soon as the lock confirms; the Bluetooth disconnect finishes afterwards
     // (still inside the exclusive section, so the next session waits for it).
     return new Promise<void>((resolve, reject) => {
       void proxy
         .exclusive(async () => {
-          const session = new LockSession(proxy, key, this.log, `lock ${lockId}`);
+          const session = new LockSession(proxy, key, this.log, `lock ${lockId}`, signal);
           try {
             await session.open(deadline);
             if (action === 'unlock') await session.unlock();
             else await session.lock();
             resolve();
           } catch (error) {
-            this.log.info(`Bluetooth ${action} of lock ${lockId} failed after: ${session.timingSummary}`);
+            if (!signal?.aborted) this.log.info(`Bluetooth ${action} of lock ${lockId} failed after: ${session.timingSummary}`);
             reject(error);
             return;
           } finally {
@@ -307,16 +313,20 @@ export class LocalController {
 
   private async fetchHistory(mac: string, lockId: number): Promise<void> {
     if (this.historyBusy.has(mac) || Date.now() - (this.historyAttemptAt.get(mac) ?? 0) < HISTORY_RETRY_MS) return;
+    // Right after our own command the new records are ours, and the gateway is busy syncing.
+    if (Date.now() - (this.lastControlAt.get(mac) ?? 0) < HISTORY_AFTER_COMMAND_MS) return;
     const proxy = this.proxy;
     const key = this.keys.get(mac);
     if (!proxy?.ready || !key) return;
     this.historyBusy.add(mac);
     this.historyAttemptAt.set(mac, Date.now());
     try {
+      const abort = new AbortController();
+      this.historyAbort = abort;
       const entries = await proxy.exclusive(async () => {
-        const session = new LockSession(proxy, key, this.log, `lock ${lockId}`);
+        const session = new LockSession(proxy, key, this.log, `lock ${lockId}`, abort.signal);
         try {
-          await session.open(Date.now() + 30_000);
+          await session.open(Date.now() + 15_000);
           return await session.readNewRecords();
         } finally {
           await session.close();
@@ -338,6 +348,7 @@ export class LocalController {
       this.log.debug(`Could not read the history of lock ${lockId}: ${(error as Error).message}`);
     } finally {
       this.historyBusy.delete(mac);
+      this.historyAbort = undefined;
     }
   }
 }

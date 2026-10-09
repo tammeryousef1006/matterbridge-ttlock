@@ -115,7 +115,9 @@ export class FakeEsphome {
    * featureFlags: Bluetooth proxy feature flags (4 = remote caching).
    * staleCache: when connected "with cache", answer services without the TTLock service.
    */
-  constructor({ lockMac, brain, uuidMode = 'unpacked', featureFlags = 0, staleCache = false, disconnectDelayMs = 0, ignoreConnects = false, ignoreDisconnects = false }) {
+  constructor({ lockMac, brain, uuidMode = 'unpacked', featureFlags = 0, staleCache = false, disconnectDelayMs = 0, ignoreConnects = false, ignoreDisconnects = false, connectDelayMs = 0 }) {
+    this.connectDelayMs = connectDelayMs;
+    this.disconnectRequests = 0;
     this.ignoreConnects = ignoreConnects;
     this.ignoreDisconnects = ignoreDisconnects;
     this.featureFlags = featureFlags;
@@ -234,7 +236,22 @@ export class FakeEsphome {
           this.usingCache = type === pb.BluetoothDeviceRequestType.BLUETOOTH_DEVICE_REQUEST_TYPE_CONNECT_V3_WITH_CACHE;
           this.connectTypes.push(this.usingCache ? 'cache' : 'fresh');
         }
+        if (disconnect) this.disconnectRequests++;
         if ((!disconnect && this.ignoreConnects) || (disconnect && this.ignoreDisconnects)) return;
+        if (!disconnect && this.connectDelayMs) {
+          this.pendingConnect = setTimeout(() => {
+            this.pendingConnect = undefined;
+            this.deviceConnected = true;
+            r.setConnected(true);
+            r.setMtu(23);
+            this.send(r);
+          }, this.connectDelayMs);
+          return;
+        }
+        if (disconnect && this.pendingConnect) {
+          clearTimeout(this.pendingConnect);
+          this.pendingConnect = undefined;
+        }
         if (disconnect && this.disconnectDelayMs) {
           this.deviceConnected = false;
           return void setTimeout(() => {

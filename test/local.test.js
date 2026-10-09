@@ -233,3 +233,38 @@ test('gives up within the time budget when the lock never answers', async () => 
     await fake.stop();
   }
 });
+
+test('a cancelled command stops waiting and cancels the pending connection', async () => {
+  const { brain, fake, local } = await setup({ connectDelayMs: 5000 });
+  try {
+    const abort = new AbortController();
+    const started = Date.now();
+    const pending = local.control(7, 'unlock', 15000, abort.signal);
+    setTimeout(() => abort.abort(), 500);
+    await assert.rejects(pending, /cancelled/);
+    assert.ok(Date.now() - started < 2500, `took ${Date.now() - started}ms`);
+    await waitFor(() => fake.disconnectRequests >= 1, 'the cancel request');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(brain.log, [], 'the command was never sent');
+    assert.equal(fake.deviceConnected, false);
+  } finally {
+    local.stop();
+    await fake.stop();
+  }
+});
+
+test('a command cancelled after connecting is not sent', async () => {
+  const { brain, fake, local } = await setup();
+  try {
+    const abort = new AbortController();
+    const pending = local.control(7, 'unlock', 15000, abort.signal);
+    await waitFor(() => fake.deviceConnected, 'the connection');
+    abort.abort();
+    await assert.rejects(pending, /cancelled/);
+    await waitFor(() => !fake.deviceConnected, 'the disconnect');
+    assert.deepEqual(brain.log, []);
+  } finally {
+    local.stop();
+    await fake.stop();
+  }
+});

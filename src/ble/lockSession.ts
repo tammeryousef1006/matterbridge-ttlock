@@ -65,7 +65,37 @@ export class LockSession {
     private readonly key: BleKey,
     private readonly log: TTLockLogger,
     private readonly label: string,
+    /** Abort before the command is sent (e.g. the cloud already did it). */
+    private readonly signal?: AbortSignal,
   ) {}
+
+  private checkAbort(): void {
+    if (this.signal?.aborted) throw new BleLockError('cancelled');
+  }
+
+  /** Wait for `promise`, but give up as soon as the session is aborted. */
+  private untilAborted<T>(promise: Promise<T>): Promise<T> {
+    const signal = this.signal;
+    if (!signal) return promise;
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(new BleLockError('cancelled'));
+      if (signal.aborted) {
+        promise.catch(() => undefined);
+        return onAbort();
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+      promise.then(
+        (value) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(value);
+        },
+        (error) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        },
+      );
+    });
+  }
 
   private readonly startedAt = Date.now();
   private lastMark = this.startedAt;
@@ -85,7 +115,9 @@ export class LockSession {
 
   /** Connect (retrying, since a sleeping lock may miss the first attempts) and prepare the GATT link. */
   async open(deadline: number): Promise<void> {
+    this.checkAbort();
     await this.connect(deadline, true);
+    this.checkAbort();
     let services = await this.central.getServices(this.key.lockMac);
     this.mark('services');
     if (!this.findCharacteristics(services)) {
@@ -118,11 +150,16 @@ export class LockSession {
       if (remaining < 1500) break;
       attempts = attempt;
       try {
-        await this.central.connectDevice(mac, Math.min(remaining, 10000), useCache);
+        await this.untilAborted(this.central.connectDevice(mac, Math.min(remaining, 10000), useCache));
         lastError = undefined;
         break;
       } catch (error) {
         lastError = error as Error;
+        if (this.signal?.aborted) {
+          // Cancel the pending connection on the proxy so the lock stays free for others.
+          await Promise.race([this.central.disconnectDevice(mac), sleep(1000)]);
+          throw new BleLockError('cancelled');
+        }
         this.log.debug(`${this.label}: Bluetooth connect attempt ${attempt} failed: ${lastError.message}`);
         // Cancel the pending connection on the proxy, but don't let that eat the time budget.
         await Promise.race([this.central.disconnectDevice(mac), sleep(1000)]);
@@ -194,8 +231,10 @@ export class LockSession {
   }
 
   private async control(command: number, label: string): Promise<void> {
+    this.checkAbort();
     const ps = parseCheckUserTime(await this.exchange(CMD_CHECK_USER_TIME, payloadCheckUserTime()));
     this.mark('handshake');
+    this.checkAbort();
     const plain = await this.exchange(command, payloadUnlock(ps, this.key.unlockKey));
     this.mark(label);
     const { status, data } = parseEnvelope(plain);

@@ -61,7 +61,13 @@ const DEFAULT_WEBHOOK_PORT = 8090;
 const OWN_COMMAND_WINDOW_MS = 20_000;
 /** Cloud records of our own commands can arrive this late. */
 const OWN_RECORD_WINDOW_MS = 60_000;
-const LOCAL_BUDGET_AUTO_MS = 10_000;
+/** History is read later than webhooks arrive, so its records of our commands can be older. */
+const OWN_HISTORY_WINDOW_MS = 5 * 60_000;
+/** A lock heard over Bluetooth this recently has its state taken from the broadcasts only. */
+const LIVE_STATE_MS = 2 * 60_000;
+const LOCAL_BUDGET_AUTO_MS = 15_000;
+/** In auto mode, how long Bluetooth may try alone before the cloud is tried in parallel. */
+const BLUETOOTH_HEAD_START_MS = 4_000;
 const LOCAL_BUDGET_LOCAL_MS = 30_000;
 /** A lock heard over Bluetooth this recently doesn't need its state polled from the cloud. */
 const LOCAL_FRESH_MS = 10 * 60_000;
@@ -265,37 +271,85 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     const done = action === 'lock' ? 'locked' : 'unlocked';
     device.lastCommandAt = Date.now();
     const mode = this.mode;
+    const finished = () => {
+      device.lastCommandAt = device.lastStateAt = Date.now();
+    };
 
-    if (mode !== 'cloud' && this.local?.hasKey(lock.lockId)) {
+    if (mode === 'local') {
+      if (!this.local?.hasKey(lock.lockId)) {
+        const error = new Error(`no Bluetooth key or ESP32 connection for ${name}, and the connection mode is "local only"`);
+        this.log.error(`Failed to ${action} ${name}: ${error.message}`);
+        throw error;
+      }
       this.log.info(`${verb} ${name} over Bluetooth...`);
       try {
-        await this.local.control(lock.lockId, action, mode === 'local' ? LOCAL_BUDGET_LOCAL_MS : LOCAL_BUDGET_AUTO_MS);
-        device.lastCommandAt = device.lastStateAt = Date.now();
+        await this.local.control(lock.lockId, action, LOCAL_BUDGET_LOCAL_MS);
+      } catch (error) {
+        this.log.error(`Failed to ${action} ${name} over Bluetooth: ${errorMessage(error)}`);
+        throw error;
+      }
+      finished();
+      this.log.info(`${name} ${done} over Bluetooth.`);
+      return;
+    }
+
+    if (mode === 'auto' && this.local?.hasKey(lock.lockId)) {
+      // Bluetooth gets a head start. If it isn't done by then (the lock is asleep, or busy
+      // with the gateway), the cloud starts too, and whichever finishes first wins.
+      this.log.info(`${verb} ${name} over Bluetooth...`);
+      const abort = new AbortController();
+      const ble = this.local.control(lock.lockId, action, LOCAL_BUDGET_AUTO_MS, abort.signal).then(() => 'bluetooth' as const);
+      ble.catch(() => undefined);
+      let headStart: NodeJS.Timeout | undefined;
+      const first = await Promise.race([
+        ble,
+        new Promise<'slow'>((resolve) => {
+          headStart = setTimeout(() => resolve('slow'), BLUETOOTH_HEAD_START_MS);
+        }),
+      ]).catch((error: unknown) => error as Error);
+      clearTimeout(headStart);
+      if (first === 'bluetooth') {
+        finished();
         this.log.info(`${name} ${done} over Bluetooth.`);
         return;
-      } catch (error) {
-        if (mode === 'local') {
-          this.log.error(`Failed to ${action} ${name} over Bluetooth: ${errorMessage(error)}`);
-          throw error;
-        }
-        this.log.info(`Bluetooth ${action} of ${name} failed (${errorMessage(error)}); using the cloud instead.`);
       }
-    } else if (mode === 'local') {
-      const error = new Error(`no Bluetooth key or ESP32 connection for ${name}, and the connection mode is "local only"`);
-      this.log.error(`Failed to ${action} ${name}: ${error.message}`);
-      throw error;
+      if (first instanceof Error) {
+        this.log.info(`Bluetooth ${action} of ${name} failed (${errorMessage(first)}); using the cloud instead.`);
+      } else {
+        this.log.info(`Bluetooth is slow to reach ${name}; also trying the TTLock cloud.`);
+        const cloud = this.cloudControl(lock.lockId, action).then(() => 'cloud' as const);
+        cloud.catch(() => undefined);
+        let winner: 'bluetooth' | 'cloud';
+        try {
+          winner = await Promise.any([ble, cloud]);
+        } catch (error) {
+          const errors = (error as AggregateError).errors ?? [];
+          const cloudError = errors[1] ?? error;
+          this.log.error(`Failed to ${action} ${name}: Bluetooth: ${errorMessage(errors[0])}; cloud: ${errorMessage(cloudError)}`);
+          throw cloudError;
+        }
+        // Don't let a late Bluetooth connection send the command a second time.
+        if (winner === 'cloud') abort.abort();
+        finished();
+        this.log.info(`${name} ${done} ${winner === 'cloud' ? 'through the TTLock cloud' : 'over Bluetooth'}.`);
+        return;
+      }
     }
 
     this.log.info(`${verb} ${name} through the TTLock cloud...`);
     try {
-      if (action === 'lock') await this.api.lock(lock.lockId);
-      else await this.api.unlock(lock.lockId);
-      device.lastCommandAt = device.lastStateAt = Date.now();
+      await this.cloudControl(lock.lockId, action);
+      finished();
       this.log.info(`${name} ${done}.`);
     } catch (error) {
       this.log.error(`Failed to ${action} ${name}: ${errorMessage(error)}`);
       throw error;
     }
+  }
+
+  private async cloudControl(lockId: number, action: 'lock' | 'unlock'): Promise<void> {
+    if (action === 'lock') await this.api.lock(lockId);
+    else await this.api.unlock(lockId);
   }
 
   // ---- state updates ------------------------------------------------------
@@ -328,12 +382,12 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
   }
 
   /** Apply a lock/unlock record (from the webhook or the lock history). */
-  private async applyRecord(device: TTLockDevice, info: RecordInfo, who: string | undefined, happenedAt?: number): Promise<void> {
+  private async applyRecord(device: TTLockDevice, info: RecordInfo, who: string | undefined, happenedAt?: number, ownWindowMs = OWN_RECORD_WINDOW_MS): Promise<void> {
     if (!info.operation) return;
     const label = METHOD_LABELS[info.method];
     const by = `${label}${who ? ` (${who})` : ''}`;
     // The cloud also reports the plugin's own commands (as "app"/"gateway"), seconds later.
-    if (info.success && ['app', 'gateway', 'remote'].includes(info.method) && Date.now() - device.lastCommandAt < OWN_RECORD_WINDOW_MS) {
+    if (info.success && ['app', 'gateway', 'remote'].includes(info.method) && Date.now() - device.lastCommandAt < ownWindowMs) {
       this.log.info(`${device.name}: record of our own ${info.operation} command, ignored.`);
       return;
     }
@@ -345,9 +399,11 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     // A record older than the state we already know (e.g. the lock has auto-locked since)
     // is still reported as an event, but must not roll the state back.
     const plausible = happenedAt !== undefined && Math.abs(Date.now() - happenedAt) < 24 * 3600_000;
-    const stale = plausible && happenedAt! < device.lastStateAt - 3000;
+    // While the ESP32 hears the lock, its broadcasts are the source of truth for the state.
+    const liveState = this.local?.seenRecently(device.lock.lockId, LIVE_STATE_MS) ?? false;
+    const stale = liveState || (plausible && happenedAt! < device.lastStateAt - 3000);
     const changed = stale ? false : await this.setLockState(device, info.operation === 'lock', ` by ${by}`);
-    if (!changed) this.log.info(`${device.name} ${info.operation === 'lock' ? 'locked' : 'unlocked'} by ${by}${stale ? ` ${Math.round((Date.now() - happenedAt!) / 1000)}s ago (state already updated since)` : ''}.`);
+    if (!changed) this.log.info(`${device.name} ${info.operation === 'lock' ? 'locked' : 'unlocked'} by ${by}${stale && plausible ? ` ${Math.round((Date.now() - happenedAt!) / 1000)}s ago` : ''}.`);
     await this.emitOperation(device, info.operation, OPERATION_SOURCE[info.method], true);
     if (info.operation === 'unlock') this.scheduleRelock(device);
   }
@@ -418,7 +474,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         continue;
       }
       const who = record.credential && info.method !== 'passcode' ? `#${record.credential}` : undefined;
-      await this.applyRecord(device, info, who);
+      await this.applyRecord(device, info, who, undefined, OWN_HISTORY_WINDOW_MS);
     }
   }
 

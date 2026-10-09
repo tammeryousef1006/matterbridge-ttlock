@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0-beta.5 (2026-10-09)
+- `auto` mode: Bluetooth gets a 4-second head start; if the lock hasn't answered by then (asleep, or busy syncing with the gateway), the cloud command starts in parallel and whichever finishes first wins. When the cloud wins, the Bluetooth attempt is cancelled before it sends anything. A stuck Bluetooth connection now costs about 6 seconds instead of 13.
+- Lock/unlock commands take priority over a background history read, and the history isn't read in the 30 seconds after the plugin's own command
+- While the ESP32 hears the lock, its broadcasts decide the lock state; webhook and history records only add the "who/how" event, so a late record can no longer flip the state
+- History records of the plugin's own commands are ignored
+
 ## 1.4.0-beta.4 (2026-10-09)
 - Webhook: records of the plugin's own commands (the cloud reports them as "app" a few seconds later) are ignored, and a record older than the current state (for example a fingerprint unlock after which the lock already auto-locked) still sends the Matter event but no longer rolls the lock state back
 - Diagnostics at info level for the beta: each change in the lock's Bluetooth broadcast (with the raw data), each webhook record, and the timing of every Bluetooth command
