@@ -43,7 +43,8 @@ export interface GattService {
 
 /** The subset of the proxy a lock session needs; lets tests substitute a fake. */
 export interface BleCentral {
-  connectDevice(mac: string, timeoutMs: number): Promise<void>;
+  /** `useCache`: let the proxy reuse its cached GATT services (skips discovery) when it supports that. */
+  connectDevice(mac: string, timeoutMs: number, useCache?: boolean): Promise<void>;
   disconnectDevice(mac: string): Promise<void>;
   getServices(mac: string): Promise<GattService[]>;
   startNotify(mac: string, characteristic: GattCharacteristic): Promise<void>;
@@ -128,6 +129,7 @@ export class EspProxy extends EventEmitter implements BleCentral {
   private advertisementCount = 0;
   private lastError: string | undefined;
   private everConnected = false;
+  private remoteCaching = false;
 
   constructor(
     private readonly options: EspProxyOptions,
@@ -167,6 +169,15 @@ export class EspProxy extends EventEmitter implements BleCentral {
         this.readyFlag = true;
         this.everConnected = true;
         this.log.info(`Connected to the ESP32 Bluetooth proxy at ${this.options.host}.`);
+        connection
+          .deviceInfoService()
+          .then((info: AnyMessage) => {
+            const flags = Number(info?.bluetoothProxyFeatureFlags ?? 0);
+            // BluetoothProxyFeature.REMOTE_CACHING = 4
+            this.remoteCaching = (flags & 4) !== 0;
+            this.log.debug(`ESP32 proxy ${info?.name ?? ''} (ESPHome ${info?.esphomeVersion ?? '?'}), Bluetooth proxy features ${flags}${this.remoteCaching ? ' (service caching)' : ''}.`);
+          })
+          .catch(() => undefined);
         this.emit('ready');
       } catch (error) {
         this.log.warn(`ESP32 proxy: could not subscribe to Bluetooth advertisements: ${(error as Error).message}`);
@@ -268,10 +279,10 @@ export class EspProxy extends EventEmitter implements BleCentral {
     if (addressType !== undefined) this.addressTypes.set(normalizeMac(mac), addressType);
   }
 
-  async connectDevice(mac: string, timeoutMs: number): Promise<void> {
+  async connectDevice(mac: string, timeoutMs: number, useCache = false): Promise<void> {
     const connection = this.requireConnection();
     const response: AnyMessage = await withTimeout(
-      connection.connectBluetoothDeviceService(macToNumber(mac), this.addressTypes.get(normalizeMac(mac)), false),
+      connection.connectBluetoothDeviceService(macToNumber(mac), this.addressTypes.get(normalizeMac(mac)), useCache && this.remoteCaching),
       timeoutMs,
       'connecting to the lock',
     );

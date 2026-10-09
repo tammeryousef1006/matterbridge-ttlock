@@ -20,7 +20,7 @@ import {
   payloadUnlock,
 } from './commands.js';
 import { aesDecrypt } from './crypto.js';
-import { BleCentral, GattCharacteristic } from './espProxy.js';
+import { BleCentral, GattCharacteristic, GattService } from './espProxy.js';
 import { Frame, FrameReassembler } from './frame.js';
 import { BleKey } from './keys.js';
 
@@ -67,15 +67,58 @@ export class LockSession {
     private readonly label: string,
   ) {}
 
+  private readonly startedAt = Date.now();
+  private lastMark = this.startedAt;
+  private readonly timings: string[] = [];
+
+  /** Record how long the last phase took, for the debug log. */
+  mark(phase: string): void {
+    const now = Date.now();
+    this.timings.push(`${phase} ${now - this.lastMark}ms`);
+    this.lastMark = now;
+  }
+
+  /** e.g. "connect 2100ms, services 80ms, ... (total 3200ms)" */
+  get timingSummary(): string {
+    return `${this.timings.join(', ')} (total ${Date.now() - this.startedAt}ms)`;
+  }
+
   /** Connect (retrying, since a sleeping lock may miss the first attempts) and prepare the GATT link. */
   async open(deadline: number): Promise<void> {
+    await this.connect(deadline, true);
+    let services = await this.central.getServices(this.key.lockMac);
+    this.mark('services');
+    if (!this.findCharacteristics(services)) {
+      // A stale service cache on the proxy: reconnect with a fresh discovery.
+      this.log.debug(`${this.label}: TTLock service missing from the cached services, rediscovering`);
+      await this.central.disconnectDevice(this.key.lockMac);
+      await this.connect(deadline, false);
+      services = await this.central.getServices(this.key.lockMac);
+      this.mark('services (fresh)');
+    }
+    const notify = this.findCharacteristics(services);
+    if (!notify) throw new BleLockError('the lock does not expose the TTLock Bluetooth service');
+    await this.central.startNotify(this.key.lockMac, notify);
+    await sleep(POST_NOTIFY_SETTLE_MS);
+    this.mark('notify');
+    // Some firmware only starts answering after one ATT read.
+    const battery = services.flatMap((s) => s.characteristics).find((c) => sameUuid(c.uuid, BATTERY_CHAR));
+    if (battery) {
+      await this.central.read(this.key.lockMac, battery.handle);
+      this.mark('wake read');
+    }
+  }
+
+  private async connect(deadline: number, useCache: boolean): Promise<void> {
     const mac = this.key.lockMac;
     let lastError: Error | undefined;
+    let attempts = 0;
     for (let attempt = 1; attempt <= 3; attempt++) {
       const remaining = deadline - Date.now();
       if (remaining < 1500) break;
+      attempts = attempt;
       try {
-        await this.central.connectDevice(mac, Math.min(remaining, 10000));
+        await this.central.connectDevice(mac, Math.min(remaining, 10000), useCache);
         lastError = undefined;
         break;
       } catch (error) {
@@ -87,33 +130,31 @@ export class LockSession {
     }
     if (lastError) throw new BleLockError(`could not connect over Bluetooth: ${lastError.message}`);
     if (Date.now() >= deadline) throw new BleLockError('could not connect over Bluetooth in time');
+    this.mark(attempts > 1 ? `connect (${attempts} attempts)` : 'connect');
+    if (!this.cleanups.length) {
+      this.cleanups.push(this.central.onNotify(mac, (_handle, data) => this.onData(data)));
+      this.cleanups.push(
+        this.central.onDisconnect(mac, () => {
+          this.disconnected = true;
+          this.waiter?.();
+        }),
+      );
+    }
+    this.disconnected = false;
+  }
 
-    this.cleanups.push(this.central.onNotify(mac, (_handle, data) => this.onData(data)));
-    this.cleanups.push(
-      this.central.onDisconnect(mac, () => {
-        this.disconnected = true;
-        this.waiter?.();
-      }),
-    );
-
-    const services = await this.central.getServices(mac);
-    let notify: GattCharacteristic | undefined;
+  /** Pick the write/notify characteristics; returns the notify one, or undefined if absent. */
+  private findCharacteristics(services: GattService[]): GattCharacteristic | undefined {
     for (const profile of GATT_PROFILES) {
       const service = services.find((s) => sameUuid(s.uuid, profile.service));
       const write = service?.characteristics.find((c) => sameUuid(c.uuid, profile.write));
       const notifyChar = service?.characteristics.find((c) => sameUuid(c.uuid, profile.notify));
       if (write && notifyChar) {
         this.writeHandle = write.handle;
-        notify = notifyChar;
-        break;
+        return notifyChar;
       }
     }
-    if (!notify) throw new BleLockError('the lock does not expose the TTLock Bluetooth service');
-    await this.central.startNotify(mac, notify);
-    await sleep(POST_NOTIFY_SETTLE_MS);
-    // Some firmware only starts answering after one ATT read.
-    const battery = services.flatMap((s) => s.characteristics).find((c) => sameUuid(c.uuid, BATTERY_CHAR));
-    if (battery) await this.central.read(mac, battery.handle);
+    return undefined;
   }
 
   async close(): Promise<void> {
@@ -153,7 +194,9 @@ export class LockSession {
 
   private async control(command: number, label: string): Promise<void> {
     const ps = parseCheckUserTime(await this.exchange(CMD_CHECK_USER_TIME, payloadCheckUserTime()));
+    this.mark('handshake');
     const plain = await this.exchange(command, payloadUnlock(ps, this.key.unlockKey));
+    this.mark(label);
     const { status, data } = parseEnvelope(plain);
     if (status !== 0x01) throw new BleLockError(`the lock refused to ${label} (status ${status}, error ${data.toString('hex')})`);
   }

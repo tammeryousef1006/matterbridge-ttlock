@@ -30,7 +30,7 @@ const GATT_TABLE = [
 ];
 
 /** Encode GetServicesResponse the way ESPHome's C++ does: each uuid half as its own (unpacked) field. */
-function encodeServicesUnpacked(address, useShortUuids) {
+function encodeServicesUnpacked(address, useShortUuids, table = GATT_TABLE) {
   const w = new BinaryWriter();
   w.writeUint64String(1, BigInt(address).toString());
   const writeUuid = (writer, item, shortField) => {
@@ -39,7 +39,7 @@ function encodeServicesUnpacked(address, useShortUuids) {
     writer.writeUint64String(1, BigInt('0x' + hex.slice(0, 16)).toString());
     writer.writeUint64String(1, BigInt('0x' + hex.slice(16)).toString());
   };
-  for (const svc of GATT_TABLE) {
+  for (const svc of table) {
     w.writeMessage(2, svc, (s, sw) => {
       writeUuid(sw, s, 4);
       sw.writeUint32(2, s.handle);
@@ -111,7 +111,16 @@ export class LockBrain {
 
 export class FakeEsphome {
   /** uuidMode: 'unpacked' (like ESPHome), 'packed', or 'short' (16-bit short_uuid for v1.12 clients). */
-  constructor({ lockMac, brain, uuidMode = 'unpacked' }) {
+  /**
+   * featureFlags: Bluetooth proxy feature flags (4 = remote caching).
+   * staleCache: when connected "with cache", answer services without the TTLock service.
+   */
+  constructor({ lockMac, brain, uuidMode = 'unpacked', featureFlags = 0, staleCache = false, disconnectDelayMs = 0 }) {
+    this.featureFlags = featureFlags;
+    this.staleCache = staleCache;
+    this.disconnectDelayMs = disconnectDelayMs;
+    this.connectTypes = [];
+    this.usingCache = false;
     this.lockMac = lockMac;
     this.address = parseInt(lockMac.replace(/:/g, ''), 16);
     this.brain = brain;
@@ -199,6 +208,13 @@ export class FakeEsphome {
         r.setName('fake-proxy');
         return this.send(r);
       }
+      case 'DeviceInfoRequest': {
+        const r = new pb.DeviceInfoResponse();
+        r.setName('fake-proxy');
+        r.setEsphomeVersion('2026.9.0');
+        r.setBluetoothProxyFeatureFlags(this.featureFlags);
+        return this.send(r);
+      }
       case 'PingRequest':
         return this.send(new pb.PingResponse());
       case 'DisconnectRequest':
@@ -209,8 +225,20 @@ export class FakeEsphome {
       case 'BluetoothDeviceRequest': {
         const r = new pb.BluetoothDeviceConnectionResponse();
         r.setAddress(msg.getAddress());
-        const disconnect = msg.getRequestType() === pb.BluetoothDeviceRequestType.BLUETOOTH_DEVICE_REQUEST_TYPE_DISCONNECT;
-        if (!disconnect) this.connectRequests++;
+        const type = msg.getRequestType();
+        const disconnect = type === pb.BluetoothDeviceRequestType.BLUETOOTH_DEVICE_REQUEST_TYPE_DISCONNECT;
+        if (!disconnect) {
+          this.connectRequests++;
+          this.usingCache = type === pb.BluetoothDeviceRequestType.BLUETOOTH_DEVICE_REQUEST_TYPE_CONNECT_V3_WITH_CACHE;
+          this.connectTypes.push(this.usingCache ? 'cache' : 'fresh');
+        }
+        if (disconnect && this.disconnectDelayMs) {
+          this.deviceConnected = false;
+          return void setTimeout(() => {
+            r.setConnected(false);
+            this.send(r);
+          }, this.disconnectDelayMs);
+        }
         this.deviceConnected = !disconnect && msg.getAddress() === this.address;
         r.setConnected(this.deviceConnected);
         r.setMtu(23);
@@ -242,7 +270,8 @@ export class FakeEsphome {
           }
           this.send(r);
         } else {
-          this.sendRaw(71, encodeServicesUnpacked(msg.getAddress(), this.uuidMode === 'short'));
+          const table = this.staleCache && this.usingCache ? GATT_TABLE.slice(1) : GATT_TABLE;
+          this.sendRaw(71, encodeServicesUnpacked(msg.getAddress(), this.uuidMode === 'short', table));
         }
         const done = new pb.BluetoothGATTGetServicesDoneResponse();
         done.setAddress(msg.getAddress());

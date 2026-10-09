@@ -50,9 +50,9 @@ function advert({ unlocked, battery, newRecords = false }) {
   return Buffer.concat([Buffer.from([0x05, 0x03, 0x02, flags, battery, 0, 0, 0, 0]), mac]);
 }
 
-async function setup({ uuidMode = 'unpacked', keysJson = haEntry } = {}) {
+async function setup({ uuidMode = 'unpacked', keysJson = haEntry, ...fakeOptions } = {}) {
   const brain = new LockBrain({ aesKey: Buffer.from(AES_HEX, 'hex'), unlockKey: UNLOCK_KEY });
-  const fake = new FakeEsphome({ lockMac: MAC, brain, uuidMode });
+  const fake = new FakeEsphome({ lockMac: MAC, brain, uuidMode, ...fakeOptions });
   const port = await fake.start();
   const adverts = [];
   const local = new LocalController(
@@ -94,7 +94,7 @@ for (const uuidMode of ['unpacked', 'packed', 'short']) {
       assert.ok(fake.writes.every((w) => w.length <= 20));
       assert.equal(fake.writeResponseRequested, false, 'writes without response, like the vendor app');
       assert.equal(fake.cccdWrites, 2, 'notifications enabled in the CCCD');
-      assert.equal(fake.deviceConnected, false, 'disconnects after each command');
+      await waitFor(() => !fake.deviceConnected, 'the disconnect after the command');
     } finally {
       local.stop();
       await fake.stop();
@@ -186,6 +186,46 @@ test('reads who/how from the lock history when it reports new records (opt-in)',
     assert.equal(records[0].lockId, 7);
     assert.equal(records[0].r[0].recordType, 20);
     assert.equal(records[0].r[0].credential, '3');
+  } finally {
+    local.stop();
+    await fake.stop();
+  }
+});
+
+test('uses the proxy service cache when supported, and rediscovers if it is stale', async () => {
+  const { brain, fake, local } = await setup({ featureFlags: 4 | 2 | 1, staleCache: true });
+  try {
+    await new Promise((r) => setTimeout(r, 300)); // device info arrives after connecting
+    await local.control(7, 'unlock', 10000);
+    assert.deepEqual(fake.connectTypes, ['cache', 'fresh']);
+    assert.deepEqual(brain.log, ['unlock']);
+  } finally {
+    local.stop();
+    await fake.stop();
+  }
+});
+
+test('does not ask for the cache when the proxy lacks it', async () => {
+  const { fake, local } = await setup({ featureFlags: 2 | 1 });
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    await local.control(7, 'unlock', 10000);
+    assert.deepEqual(fake.connectTypes, ['fresh']);
+  } finally {
+    local.stop();
+    await fake.stop();
+  }
+});
+
+test('reports success before the Bluetooth disconnect has finished', async () => {
+  const { brain, fake, local } = await setup({ disconnectDelayMs: 2000 });
+  try {
+    const started = Date.now();
+    await local.control(7, 'unlock', 10000);
+    assert.ok(Date.now() - started < 1500, `took ${Date.now() - started}ms`);
+    // The next command waits for the previous session to close, then works.
+    await local.control(7, 'lock', 10000);
+    assert.deepEqual(brain.log, ['unlock', 'lock']);
   } finally {
     local.stop();
     await fake.stop();

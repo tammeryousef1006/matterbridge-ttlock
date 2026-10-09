@@ -246,15 +246,28 @@ export class LocalController {
     const proxy = this.proxy;
     if (!proxy?.ready) throw new BleLockError('the ESP32 Bluetooth proxy is not connected');
     const deadline = Date.now() + budgetMs;
-    await proxy.exclusive(async () => {
-      const session = new LockSession(proxy, key, this.log, `lock ${lockId}`);
-      try {
-        await session.open(deadline);
-        if (action === 'unlock') await session.unlock();
-        else await session.lock();
-      } finally {
-        await session.close();
-      }
+    // Report success as soon as the lock confirms; the Bluetooth disconnect finishes afterwards
+    // (still inside the exclusive section, so the next session waits for it).
+    return new Promise<void>((resolve, reject) => {
+      void proxy
+        .exclusive(async () => {
+          const session = new LockSession(proxy, key, this.log, `lock ${lockId}`);
+          try {
+            await session.open(deadline);
+            if (action === 'unlock') await session.unlock();
+            else await session.lock();
+            resolve();
+          } catch (error) {
+            this.log.debug(`Bluetooth ${action} of lock ${lockId} failed after: ${session.timingSummary}`);
+            reject(error);
+            return;
+          } finally {
+            await session.close();
+          }
+          session.mark('disconnect');
+          this.log.debug(`Bluetooth ${action} timing for lock ${lockId}: ${session.timingSummary}`);
+        })
+        .catch(reject);
     });
   }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0-beta.2 (2026-10-09)
+- Faster Bluetooth lock/unlock: the command is reported done as soon as the lock confirms (the Bluetooth disconnect finishes afterwards), and the ESP32's GATT service cache is used when the proxy supports it (with automatic rediscovery if the cache is stale)
+- Battery: values are only written when they change, and the lock's Bluetooth reading is preferred over the cloud's when the ESP32 can see the lock (no more 88% / 80% flip-flopping or repeated log lines)
+- Debug log shows how long each phase of a Bluetooth command took
+
 ## 1.4.0-beta.1 (2026-10-09)
 - **Webhook (optional):** receives the TTLock cloud callback, so fingerprint, card, passcode and key use show up in real time with who and how. Sends Matter lock operation events. The plugin generates the secret webhook URL and shows it in the settings and the log.
 - **Local control (optional):** lock/unlock over Bluetooth through an ESPHome Bluetooth proxy (ESP32), with `auto` (Bluetooth first, cloud fallback), `local` and `cloud` connection modes

@@ -458,7 +458,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         (record.lockId !== undefined ? this.devices.get(record.lockId) : undefined) ??
         [...this.devices.values()].find((d) => record.lockMac && d.lock.lockMac && normalizeMac(d.lock.lockMac) === normalizeMac(record.lockMac));
       if (!device) continue;
-      if (record.battery !== undefined) await this.updateBattery(device, normalizeBattery(record.battery));
+      if (record.battery !== undefined && !this.local?.seenRecently(device.lock.lockId, LOCAL_FRESH_MS)) await this.updateBattery(device, normalizeBattery(record.battery));
       const info =
         (record.recordTypeFromLock !== undefined ? classifyLockRecord(record.recordTypeFromLock) : undefined) ??
         (record.recordType !== undefined ? classifyCloudRecord(record.recordType) : undefined);
@@ -489,7 +489,8 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         const device = this.devices.get(lock.lockId);
         if (!device) continue;
         device.lock = { ...device.lock, ...lock };
-        await this.updateBattery(device, normalizeBattery(lock.electricQuantity));
+        // The lock's own Bluetooth broadcast is fresher than the cloud's battery value.
+        if (!this.local?.seenRecently(lock.lockId, LOCAL_FRESH_MS)) await this.updateBattery(device, normalizeBattery(lock.electricQuantity));
       }
 
       for (const device of this.devices.values()) {
@@ -512,6 +513,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
   private async updateBattery(device: TTLockDevice, percent: number | undefined): Promise<void> {
     if (percent === undefined) return;
     const { endpoint } = device;
+    if (endpoint.getAttribute(PowerSource.Cluster.id, 'batPercentRemaining') === percent * 2) return;
     await endpoint.setAttribute(PowerSource.Cluster.id, 'batPercentRemaining', percent * 2, endpoint.log);
     await endpoint.setAttribute(PowerSource.Cluster.id, 'batChargeLevel', chargeLevel(percent), endpoint.log);
     await endpoint.setAttribute(PowerSource.Cluster.id, 'batReplacementNeeded', percent <= LOW_BATTERY_PERCENT, endpoint.log);
