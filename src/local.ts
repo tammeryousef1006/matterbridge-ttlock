@@ -259,8 +259,7 @@ export class LocalController {
     this.lastAdvertisement.set(mac, decoded);
     const flags = adv.data.length > 3 ? adv.data[3] : -1;
     if (flags !== this.lastFlags.get(mac)) {
-      // Info level during the beta, to learn how real locks report fingerprint/keypad use.
-      this.log.info(
+      this.log.debug(
         `Bluetooth broadcast from lock ${lockId}: ${decoded.dormant ? 'asleep (state unknown)' : decoded.locked ? 'locked' : 'unlocked'}, battery ${decoded.battery}%${decoded.hasNewRecords ? ', has new records' : ''} [flags 0x${flags.toString(16).padStart(2, '0')}, data ${adv.data.toString('hex')}].`,
       );
       this.lastFlags.set(mac, flags);
@@ -296,14 +295,14 @@ export class LocalController {
             else await session.lock();
             resolve();
           } catch (error) {
-            if (!signal?.aborted) this.log.info(`Bluetooth ${action} of lock ${lockId} failed after: ${session.timingSummary}`);
+            if (!signal?.aborted) this.log.debug(`Bluetooth ${action} of lock ${lockId} failed after: ${session.timingSummary}`);
             reject(error);
             return;
           } finally {
             await session.close();
           }
           session.mark('disconnect');
-          this.log.info(`Bluetooth ${action} timing for lock ${lockId}: ${session.timingSummary}`);
+          this.log.debug(`Bluetooth ${action} timing for lock ${lockId}: ${session.timingSummary}`);
         })
         .catch(reject);
     });

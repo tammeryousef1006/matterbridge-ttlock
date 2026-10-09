@@ -579,7 +579,10 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         const match = records.find((r) => {
           if (r.lockDate !== undefined && r.lockDate < changedAt - 90_000) return false;
           const info = (r.recordTypeFromLock !== undefined ? classifyLockRecord(r.recordTypeFromLock) : undefined) ?? (r.recordType !== undefined ? classifyCloudRecord(r.recordType) : undefined);
-          return info?.operation === operation;
+          if (info?.operation !== operation) return false;
+          // The record of the plugin's own earlier command is not what happened at the door.
+          if (['app', 'gateway', 'remote'].includes(info.method) && r.lockDate !== undefined && Math.abs(r.lockDate - device.lastCommandAt) < 60_000) return false;
+          return true;
         });
         if (match) {
           await this.onCloudRecords([match], 'cloud history');
@@ -665,7 +668,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
       const device =
         (record.lockId !== undefined ? this.devices.get(record.lockId) : undefined) ??
         [...this.devices.values()].find((d) => record.lockMac && d.lock.lockMac && normalizeMac(d.lock.lockMac) === normalizeMac(record.lockMac));
-      this.log.info(
+      this.log.debug(
         `${source} record: lock ${record.lockId ?? record.lockMac}, type ${record.recordType ?? '-'}/${record.recordTypeFromLock ?? '-'}, ${record.success ? 'success' : 'failed'}${record.username ? `, by ${record.username}` : ''}${record.lockDate ? `, at ${new Date(record.lockDate).toISOString()}` : ''}.`,
       );
       if (!device) continue;

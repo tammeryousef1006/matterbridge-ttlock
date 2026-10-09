@@ -66,7 +66,7 @@ Turn on **Show lock users in Matter** to mirror the fingerprints, cards and pass
 - The list is refreshed from the TTLock cloud at start and every 15 minutes.
 - **Read-only:** adding or removing users or codes from a Matter controller is refused. Manage them in the TTLock app; fingerprints have to be enrolled at the lock anyway.
 
-Controller support varies: SmartThings and Home Assistant use lock users; Apple Home and Google Home mostly ignore them (lock/unlock works the same). Turning the option on or off changes the lock's Matter features, so your controller may need to refresh or re-add the device.
+Controller support varies: Home Assistant can show the user in lock events. SmartThings currently shows only its own members/guests under *Manage users* and plain *Locked/Unlocked* in its history (adding guests or codes there is refused, since the mirror is read-only). Apple Home and Google Home ignore lock users; lock/unlock works the same everywhere. Turning the option on or off changes the lock's Matter features, so your controller may need to refresh or re-add the device.
 
 ## Webhook (real-time records from the TTLock cloud)
 
