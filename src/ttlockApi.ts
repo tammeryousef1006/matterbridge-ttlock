@@ -28,6 +28,8 @@ export interface TTLockLock {
   hasGateway?: number;
   firmwareRevision?: string;
   modelNum?: string;
+  /** Auto-lock delay in seconds (0 or negative when off). */
+  autoLockTime?: number;
 }
 
 /** Lock open state as reported by /v3/lock/queryOpenState. */

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0-beta.1 (2026-10-09)
+- **Webhook (optional):** receives the TTLock cloud callback, so fingerprint, card, passcode and key use show up in real time with who and how. Sends Matter lock operation events. The plugin generates the secret webhook URL and shows it in the settings and the log.
+- **Local control (optional):** lock/unlock over Bluetooth through an ESPHome Bluetooth proxy (ESP32), with `auto` (Bluetooth first, cloud fallback), `local` and `cloud` connection modes
+- Instant lock state and battery from the lock's Bluetooth broadcasts, including fingerprint/keypad unlocks and auto-lock
+- Bluetooth keys from the TTLock account (with email verification), the TTLock API `lockData` (experimental), or pasted JSON (e.g. from the Home Assistant TTLock BLE integration)
+- Optional reading of the lock's own history (who/how)
+- Works offline in local mode with the last known lock list
+- Publishing: pre-release versions go to the npm `beta` tag
+
 ## 1.2.1 (2026-10-06)
 - Buy Me a Coffee sponsor link in Matterbridge, on GitHub and in the README
 

@@ -2,7 +2,10 @@
   "title": "Matterbridge TTLock Plugin",
   "description": "matterbridge-ttlock by Tamer Salah",
   "type": "object",
-  "required": ["ttlock_client_id", "ttlock_client_secret"],
+  "required": [
+    "ttlock_client_id",
+    "ttlock_client_secret"
+  ],
   "properties": {
     "name": {
       "description": "Plugin name",
@@ -59,16 +62,112 @@
     "whiteList": {
       "description": "Only expose locks with these names or IDs (empty exposes all)",
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "uniqueItems": true,
       "selectFrom": "name"
     },
     "blackList": {
       "description": "Never expose locks with these names or IDs",
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "uniqueItems": true,
       "selectFrom": "name"
+    },
+    "webhook": {
+      "title": "Webhook (real-time records from the TTLock cloud)",
+      "description": "Optional. When someone uses a fingerprint, card, passcode or key, the TTLock cloud tells the plugin right away, including who and how.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "title": "Enable webhook",
+          "type": "boolean",
+          "default": false
+        },
+        "publicUrl": {
+          "title": "Public URL",
+          "description": "The internet address that reaches this Matterbridge on the port below, e.g. https://lock.example.com from a Cloudflare Tunnel or ngrok. It must be reachable from the internet: a local address like http://192.168.1.10 will NOT work, because the TTLock servers call it.",
+          "type": "string"
+        },
+        "port": {
+          "title": "Port",
+          "description": "Local port the webhook listens on (forward your tunnel to it).",
+          "type": "number",
+          "default": 8090
+        },
+        "url": {
+          "title": "Your webhook URL",
+          "description": "Filled in by the plugin after you enable the webhook, set the public URL and restart. Copy it into your TTLock Open Platform application as the callback URL.",
+          "type": "string",
+          "readOnly": true
+        }
+      }
+    },
+    "localControl": {
+      "title": "Local control (Bluetooth through an ESP32)",
+      "description": "Optional. Control the locks directly over Bluetooth through an ESPHome Bluetooth proxy (ESP32) near the lock: faster, works without internet, and shows fingerprint/keypad/auto-lock changes instantly. The ESP32 must be dedicated to this plugin: remove it from Home Assistant.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "title": "Connection mode",
+          "description": "auto: Bluetooth first, the cloud if that fails. local: Bluetooth only. cloud: TTLock cloud only (ignores the ESP32). Local control is only used when the ESP32 address is set.",
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "cloud"
+          ],
+          "default": "auto"
+        },
+        "espHost": {
+          "title": "ESP32 address",
+          "description": "IP address or hostname of the ESPHome Bluetooth proxy, e.g. 192.168.1.60. Leave empty to disable local control.",
+          "type": "string"
+        },
+        "espPort": {
+          "title": "ESP32 API port",
+          "type": "number",
+          "default": 6053
+        },
+        "espEncryptionKey": {
+          "title": "ESP32 API encryption key",
+          "description": "The \"api: encryption: key\" from the ESP32 ESPHome configuration (base64). Leave empty if the API is not encrypted.",
+          "type": "string",
+          "ui:widget": "password"
+        },
+        "espPassword": {
+          "title": "ESP32 API password (legacy)",
+          "description": "Only for old ESPHome configurations that use an API password instead of an encryption key.",
+          "type": "string",
+          "ui:widget": "password"
+        },
+        "useAppAccount": {
+          "title": "Get Bluetooth keys from the TTLock account",
+          "description": "Download the locks Bluetooth keys with the TTLock username/password above (the same way the TTLock app does). The first time, TTLock may email you a verification code: enter it below and restart.",
+          "type": "boolean",
+          "default": true
+        },
+        "verificationCode": {
+          "title": "Verification code",
+          "description": "Only when the log asks for it: the code TTLock sent to your email/phone.",
+          "type": "string"
+        },
+        "bluetoothKeys": {
+          "title": "Bluetooth keys (JSON, optional)",
+          "description": "Alternative to the account download: paste the lock key JSON, e.g. the \"keys\" of the TTLock BLE integration from Home Assistant (.storage/core.config_entries). Keep it private.",
+          "type": "string",
+          "ui:widget": "textarea"
+        },
+        "readLockHistory": {
+          "title": "Read who/how from the lock history",
+          "description": "After someone uses the lock, briefly connect over Bluetooth to read how it was opened (fingerprint, card, passcode...). Uses a little more battery, and the lock may then not upload those records to the TTLock app history. Not needed if the webhook is enabled.",
+          "type": "boolean",
+          "default": false
+        }
+      }
     },
     "debug": {
       "description": "Enable debug logging for the plugin",

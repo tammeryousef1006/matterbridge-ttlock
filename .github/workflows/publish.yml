@@ -21,6 +21,17 @@ jobs:
       - run: npm ci
       - run: npm install --no-save matterbridge
       - run: npm test
-      - run: npm publish --provenance --access public
+      # Pre-release versions (e.g. 1.4.0-beta.1) go to the "beta" tag so regular users don't get them
+      - name: Publish
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "matterbridge-ttlock@$VERSION" version >/dev/null 2>&1; then
+            echo "matterbridge-ttlock@$VERSION is already on npm, nothing to publish."
+            exit 0
+          fi
+          case "$VERSION" in
+            *-*) npm publish --provenance --access public --tag beta ;;
+            *) npm publish --provenance --access public ;;
+          esac
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
