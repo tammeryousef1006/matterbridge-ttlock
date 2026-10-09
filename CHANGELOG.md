@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0-beta.6 (2026-10-09)
+- **Lock users (optional, read-only):** the fingerprints, cards and passcodes from the TTLock app appear as Matter lock users (grouped by name, expired ones disabled, refreshed every 15 minutes). Lock events name the person ("unlocked by fingerprint (Tamer)") and carry the Matter user and credential. Adding or removing users/codes from a controller is refused.
+- README: ESP32 scan settings to listen continuously, so short fingerprint/keypad broadcasts are not missed
+
 ## 1.4.0-beta.5 (2026-10-09)
 - `auto` mode: Bluetooth gets a 4-second head start; if the lock hasn't answered by then (asleep, or busy syncing with the gateway), the cloud command starts in parallel and whichever finishes first wins. When the cloud wins, the Bluetooth attempt is cancelled before it sends anything. A stuck Bluetooth connection now costs about 6 seconds instead of 13.
 - Lock/unlock commands take priority over a background history read, and the history isn't read in the 30 seconds after the plugin's own command

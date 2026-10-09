@@ -1,5 +1,14 @@
 import { randomBytes } from 'crypto';
-import { MatterbridgeDynamicPlatform, MatterbridgeEndpoint, PlatformConfig, PlatformMatterbridge, bridgedNode, doorLock, powerSource } from 'matterbridge';
+import {
+  MatterbridgeDoorLockServer,
+  MatterbridgeDynamicPlatform,
+  MatterbridgeEndpoint,
+  PlatformConfig,
+  PlatformMatterbridge,
+  bridgedNode,
+  doorLock,
+  powerSource,
+} from 'matterbridge';
 import { AnsiLogger } from 'matterbridge/logger';
 import { DoorLock, PowerSource } from 'matterbridge/matter/clusters';
 
@@ -8,9 +17,15 @@ import { normalizeMac } from './ble/keys.js';
 import { KeyValueStore, LocalController } from './local.js';
 import { METHOD_LABELS, OperationMethod, RecordInfo, classifyCloudRecord, classifyLockRecord } from './records.js';
 import { TTLockApi, TTLockLock, TTLockOpenState, errorMessage } from './ttlockApi.js';
+import { Mirror, MirrorIndexes, buildMirror, findUser } from './users.js';
 import { CloudRecord, WebhookServer, buildWebhookUrl } from './webhook.js';
 
 export type ConnectionMode = 'auto' | 'local' | 'cloud';
+
+interface RecordUser {
+  userIndex: number;
+  credential?: { credentialType: number; credentialIndex: number };
+}
 
 export interface TTLockPlatformConfig extends PlatformConfig {
   ttlock_client_id: string;
@@ -22,6 +37,8 @@ export interface TTLockPlatformConfig extends PlatformConfig {
   refreshInterval?: number;
   whiteList?: string[];
   blackList?: string[];
+  /** Show the lock's fingerprints, cards and passcodes as Matter users (read-only). */
+  showLockUsers?: boolean;
   webhook?: {
     enabled?: boolean;
     publicUrl?: string;
@@ -50,6 +67,8 @@ interface TTLockDevice {
   /** When the known lock state last changed (by any source), to ignore older records. */
   lastStateAt: number;
   relockTimer?: NodeJS.Timeout;
+  /** The TTLock credentials mirrored as Matter users, when enabled. */
+  mirror?: Mirror;
 }
 
 export const DEFAULT_TTLOCK_API_BASE_URL = 'https://api.sciener.com';
@@ -71,6 +90,19 @@ const BLUETOOTH_HEAD_START_MS = 4_000;
 const LOCAL_BUDGET_LOCAL_MS = 30_000;
 /** A lock heard over Bluetooth this recently doesn't need its state polled from the cloud. */
 const LOCAL_FRESH_MS = 10 * 60_000;
+/** How often the users mirror is refreshed from the TTLock cloud. */
+const USERS_SYNC_MS = 15 * 60_000;
+/** Matter door lock with users plus PIN, card and fingerprint credentials. */
+const DOOR_LOCK_WITH_USERS = MatterbridgeDoorLockServer.with(
+  DoorLock.Feature.User,
+  DoorLock.Feature.PinCredential,
+  DoorLock.Feature.RfidCredential,
+  DoorLock.Feature.FingerCredentials,
+).enable({
+  events: { doorLockAlarm: true, lockOperation: true, lockOperationError: true },
+  commands: { lockDoor: true, unlockDoor: true, unlockWithTimeout: true },
+});
+
 const SENSITIVE_KEYS = ['ttlock_client_secret', 'ttlock_password', 'ttlock_access_token'];
 const SENSITIVE_LOCAL_KEYS = ['espEncryptionKey', 'espPassword', 'bluetoothKeys', 'verificationCode'];
 
@@ -96,6 +128,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
   private readonly devices = new Map<number, TTLockDevice>();
   private refreshTimer: NodeJS.Timeout | undefined;
   private refreshing = false;
+  private usersTimer: NodeJS.Timeout | undefined;
   private local: LocalController | undefined;
   private webhook: WebhookServer | undefined;
   private readonly recentCloudRecords: string[] = [];
@@ -194,12 +227,20 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     }
 
     if (this.ttlockConfig.webhook?.enabled === true) await this.startWebhook();
+
+    if (this.ttlockConfig.showLockUsers === true) {
+      await this.syncUsers();
+      this.usersTimer = setInterval(() => void this.syncUsers(), USERS_SYNC_MS);
+      this.usersTimer.unref?.();
+    }
   }
 
   override async onShutdown(reason?: string): Promise<void> {
     this.log.info(`onShutdown called with reason: ${reason ?? 'none'}`);
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     this.refreshTimer = undefined;
+    if (this.usersTimer) clearInterval(this.usersTimer);
+    this.usersTimer = undefined;
     for (const device of this.devices.values()) if (device.relockTimer) clearTimeout(device.relockTimer);
     this.local?.stop();
     this.local = undefined;
@@ -239,8 +280,30 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         1,
         lock.firmwareRevision || '1.0.0',
       )
-      .createDefaultDoorLockClusterServer(DoorLock.LockState.Locked, DoorLock.LockType.DeadBolt)
       .createDefaultPowerSourceReplaceableBatteryClusterServer(battery ?? 100, chargeLevel(battery), 6000, 'AA', 4);
+    if (this.ttlockConfig.showLockUsers === true) {
+      endpoint.behaviors.require(DOOR_LOCK_WITH_USERS, {
+        lockState: DoorLock.LockState.Locked,
+        lockType: DoorLock.LockType.DeadBolt,
+        actuatorEnabled: true,
+        operatingMode: DoorLock.OperatingMode.Normal,
+        supportedOperatingModes: { normal: false, vacation: true, privacy: true, noRemoteLockUnlock: false, passage: true, alwaysSet: 2047 },
+        autoRelockTime: 0,
+        numberOfTotalUsersSupported: 300,
+        numberOfPinUsersSupported: 150,
+        numberOfRfidUsersSupported: 200,
+        numberOfCredentialsSupportedPerUser: 30,
+        minPinCodeLength: 4,
+        maxPinCodeLength: 9,
+        minRfidCodeLength: 1,
+        maxRfidCodeLength: 20,
+        wrongCodeEntryLimit: 5,
+        userCodeTemporaryDisableTime: 60,
+        credentialRulesSupport: { single: true },
+      });
+    } else {
+      endpoint.createDefaultDoorLockClusterServer(DoorLock.LockState.Locked, DoorLock.LockType.DeadBolt);
+    }
 
     const device: TTLockDevice = { lock, name, endpoint, lastCommandAt: 0, lastStateAt: 0 };
 
@@ -256,6 +319,17 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     endpoint.addCommandHandler('unlockDoor', async () => {
       await this.runCommand(device, 'unlock');
     });
+
+    if (this.ttlockConfig.showLockUsers === true) {
+      // Read-only mirror: users and codes are managed in the TTLock app.
+      for (const command of ['DoorLock.setUser', 'DoorLock.clearUser', 'DoorLock.setCredential', 'DoorLock.clearCredential'] as const) {
+        endpoint.addCommandHandler(command, () => {
+          const what = command.slice('DoorLock.'.length).replace(/([A-Z])/g, ' $1').toLowerCase();
+          this.log.info(`${name}: a controller tried to ${what}; users and codes are read-only here, manage them in the TTLock app.`);
+          throw new Error('Users and credentials are managed in the TTLock app');
+        });
+      }
+    }
 
     await this.registerDevice(endpoint);
     this.devices.set(lock.lockId, device);
@@ -365,13 +439,14 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     return true;
   }
 
-  private async emitOperation(device: TTLockDevice, operation: 'lock' | 'unlock', source: DoorLock.OperationSource, success: boolean): Promise<void> {
+  private async emitOperation(device: TTLockDevice, operation: 'lock' | 'unlock', source: DoorLock.OperationSource, success: boolean, user?: RecordUser): Promise<void> {
     const payload = {
       lockOperationType: operation === 'lock' ? DoorLock.LockOperationType.Lock : DoorLock.LockOperationType.Unlock,
       operationSource: source,
-      userIndex: null,
+      userIndex: user?.userIndex ?? null,
       fabricIndex: null,
       sourceNode: null,
+      ...(user?.credential ? { credentials: [user.credential] } : {}),
     };
     try {
       if (success) await device.endpoint.triggerEvent(DoorLock.Cluster.id, 'lockOperation', payload, device.endpoint.log);
@@ -382,8 +457,22 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
   }
 
   /** Apply a lock/unlock record (from the webhook or the lock history). */
-  private async applyRecord(device: TTLockDevice, info: RecordInfo, who: string | undefined, happenedAt?: number, ownWindowMs = OWN_RECORD_WINDOW_MS): Promise<void> {
+  private async applyRecord(
+    device: TTLockDevice,
+    info: RecordInfo,
+    who: string | undefined,
+    happenedAt?: number,
+    ownWindowMs = OWN_RECORD_WINDOW_MS,
+    identify?: { value?: string; name?: string },
+  ): Promise<void> {
     if (!info.operation) return;
+    // With the users mirror, name the person (and pass their Matter user in the event).
+    const kind = info.method === 'fingerprint' ? 'fingerprint' : info.method === 'card' ? 'card' : info.method === 'passcode' ? 'passcode' : undefined;
+    const match = findUser(device.mirror, kind, identify?.value, identify?.name);
+    const user: RecordUser | undefined = match
+      ? { userIndex: match.user.index, credential: match.credential ? { credentialType: match.credential.type, credentialIndex: match.credential.index } : undefined }
+      : undefined;
+    if (match) who = match.user.name;
     const label = METHOD_LABELS[info.method];
     const by = `${label}${who ? ` (${who})` : ''}`;
     // The cloud also reports the plugin's own commands (as "app"/"gateway"), seconds later.
@@ -393,7 +482,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     }
     if (!info.success) {
       this.log.info(`${device.name}: failed ${info.operation} attempt with ${by}.`);
-      await this.emitOperation(device, info.operation, OPERATION_SOURCE[info.method], false);
+      await this.emitOperation(device, info.operation, OPERATION_SOURCE[info.method], false, user);
       return;
     }
     // A record older than the state we already know (e.g. the lock has auto-locked since)
@@ -404,7 +493,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
     const stale = liveState || (plausible && happenedAt! < device.lastStateAt - 3000);
     const changed = stale ? false : await this.setLockState(device, info.operation === 'lock', ` by ${by}`);
     if (!changed) this.log.info(`${device.name} ${info.operation === 'lock' ? 'locked' : 'unlocked'} by ${by}${stale && plausible ? ` ${Math.round((Date.now() - happenedAt!) / 1000)}s ago` : ''}.`);
-    await this.emitOperation(device, info.operation, OPERATION_SOURCE[info.method], true);
+    await this.emitOperation(device, info.operation, OPERATION_SOURCE[info.method], true, user);
     if (info.operation === 'unlock') this.scheduleRelock(device);
   }
 
@@ -474,7 +563,7 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         continue;
       }
       const who = record.credential && info.method !== 'passcode' ? `#${record.credential}` : undefined;
-      await this.applyRecord(device, info, who, undefined, OWN_HISTORY_WINDOW_MS);
+      await this.applyRecord(device, info, who, undefined, OWN_HISTORY_WINDOW_MS, { value: record.credential });
     }
   }
 
@@ -539,8 +628,80 @@ export class TTLockPlatform extends MatterbridgeDynamicPlatform {
         this.log.debug(`${device.name}: webhook record type ${record.recordType}/${record.recordTypeFromLock} (not a lock/unlock).`);
         continue;
       }
-      await this.applyRecord(device, { ...info, success: info.success && record.success }, record.username, record.lockDate);
+      await this.applyRecord(device, { ...info, success: info.success && record.success }, record.username, record.lockDate, OWN_RECORD_WINDOW_MS, {
+        value: record.keyboardPwd,
+        name: record.username,
+      });
     }
+  }
+
+  // ---- users mirror -------------------------------------------------------
+
+  /** Mirror each lock's fingerprints, cards and passcodes as (read-only) Matter users. */
+  private async syncUsers(): Promise<void> {
+    for (const device of this.devices.values()) {
+      let credentials;
+      try {
+        credentials = await this.api.listCredentials(device.lock.lockId);
+      } catch (error) {
+        this.log.warn(`Could not read the users of ${device.name}: ${errorMessage(error)}`);
+        continue;
+      }
+      const indexKey = `userIndexes-${device.lock.lockId}`;
+      const previous = await this.store.get<MirrorIndexes>(indexKey, { users: {}, credentials: {} });
+      const mirror = buildMirror(credentials, previous);
+      await this.store.set(indexKey, mirror.indexes);
+      const changed = JSON.stringify(device.mirror?.users) !== JSON.stringify(mirror.users);
+      device.mirror = mirror;
+      if (!changed) continue;
+      try {
+        await this.writeUsers(device, mirror);
+      } catch (error) {
+        this.log.warn(`Could not show the users of ${device.name} in Matter: ${errorMessage(error)}`);
+        continue;
+      }
+      const summary = mirror.users
+        .map((u) => {
+          const counts = (['fingerprint', 'card', 'passcode'] as const)
+            .map((kind) => [kind, u.credentials.filter((c) => c.kind === kind).length] as const)
+            .filter(([, n]) => n > 0)
+            .map(([kind, n]) => `${n} ${kind}${n > 1 ? 's' : ''}`)
+            .join(', ');
+          return `${u.name} (${counts}${u.enabled ? '' : ', expired'})`;
+        })
+        .join('; ');
+      this.log.info(`${device.name} users in Matter: ${mirror.users.length ? summary : 'none'}.`);
+    }
+  }
+
+  private async writeUsers(device: TTLockDevice, mirror: Mirror): Promise<void> {
+    await device.endpoint.act((agent) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const lock = agent.get(DOOR_LOCK_WITH_USERS) as any;
+      const auth = lock.auth;
+      lock.state.users = mirror.users.map((u) => ({
+        userIndex: u.index,
+        userName: u.matterName,
+        userUniqueId: null,
+        userStatus: u.enabled ? DoorLock.UserStatus.OccupiedEnabled : DoorLock.UserStatus.OccupiedDisabled,
+        userType: DoorLock.UserType.UnrestrictedUser,
+        credentialRule: DoorLock.CredentialRule.Single,
+        credentials: u.credentials.map((c) => ({ credentialType: c.type, credentialIndex: c.index })),
+        // Not created by any Matter controller.
+        creatorFabricIndex: undefined,
+        lastModifiedFabricIndex: undefined,
+      }));
+      // The real codes stay in TTLock; Matter only needs the credential to exist.
+      lock.state.credentials = mirror.users.flatMap((u) =>
+        u.credentials.map((c) => ({
+          credentialType: c.type,
+          credentialIndex: c.index,
+          credentialData: auth.encrypt(new TextEncoder().encode(`ttlock-${c.kind}-${c.ttlockId}`)),
+          creatorFabricIndex: undefined,
+          lastModifiedFabricIndex: undefined,
+        })),
+      );
+    });
   }
 
   // ---- cloud polling ------------------------------------------------------

@@ -14,6 +14,7 @@ A Matterbridge plugin for controlling TTLock smart locks via the TTLock API. Thi
 - Choose which locks to expose with a whitelist/blacklist
 - **Optional webhook:** the TTLock cloud reports fingerprint, card, passcode and key use in real time, including who and how
 - **Optional local control:** lock/unlock over Bluetooth through an ESP32 (ESPHome Bluetooth proxy), with instant state updates and a cloud fallback
+- **Optional lock users:** your fingerprints, cards and passcodes appear as Matter lock users, and lock events say who opened the door
 
 ## Prerequisites
 
@@ -48,11 +49,24 @@ Open the plugin config in the frontend.
 | `refreshInterval` | Number | No | Seconds between lock state and battery refreshes (default `300`, minimum `30`, `0` disables) |
 | `whiteList` | String[] | No | Only expose locks with these names or IDs |
 | `blackList` | String[] | No | Never expose locks with these names or IDs |
+| `showLockUsers` | Boolean | No | Show fingerprints, cards and passcodes as Matter lock users (read-only, default `false`) |
 | `debug` | Boolean | No | Enable debug logging |
 
 \* Either username/password OR access_token must be provided. Username/password is recommended because the plugin can then renew the token on its own; a static access token stops working when it expires.
 
 The **Webhook** and **Local control** sections are optional and off by default. Without them the plugin works exactly as before (cloud only), with no extra errors or warnings.
+
+## Lock users (read-only)
+
+Turn on **Show lock users in Matter** to mirror the fingerprints, cards and passcodes registered in the TTLock app as Matter lock users:
+
+- Credentials with the same name become one user: a fingerprint named "Tamer" and a card named "Tamer" are the user *Tamer* with two credentials. Unnamed credentials each get their own user. Matter allows 10 characters per name, so longer names are shortened.
+- Expired credentials show as a disabled user.
+- Lock events name the person: *"unlocked by fingerprint (Tamer)"*, and the Matter *lock operation* event carries the user, so controllers that support it can show who opened the door.
+- The list is refreshed from the TTLock cloud at start and every 15 minutes.
+- **Read-only:** adding or removing users or codes from a Matter controller is refused. Manage them in the TTLock app; fingerprints have to be enrolled at the lock anyway.
+
+Controller support varies: SmartThings and Home Assistant use lock users; Apple Home and Google Home mostly ignore them (lock/unlock works the same). Turning the option on or off changes the lock's Matter features, so your controller may need to refresh or re-add the device.
 
 ## Webhook (real-time records from the TTLock cloud)
 
@@ -101,7 +115,11 @@ bluetooth_proxy:
 esp32_ble_tracker:
   scan_parameters:
     active: true
+    interval: 1100ms      # listen continuously, so short "unlocked" broadcasts
+    window: 1100ms        # (fingerprint, keypad) are not missed
 ```
+
+The ESPHome defaults only listen for Bluetooth part of the time, which can delay or miss a quick fingerprint unlock; the `interval`/`window` values above make the ESP32 listen all the time (as ESPHome's ready-made Bluetooth proxy firmware does).
 
 In the plugin settings, fill in **ESP32 address**, and **ESP32 API encryption key** if your ESPHome configuration has one.
 

@@ -77,6 +77,12 @@
       "uniqueItems": true,
       "selectFrom": "name"
     },
+    "showLockUsers": {
+      "title": "Show lock users in Matter (read-only)",
+      "description": "Show the fingerprints, cards and passcodes registered in the TTLock app as Matter lock users (credentials with the same name become one user, e.g. \"Tamer\"), and name the person in lock events (\"unlocked by fingerprint (Tamer)\"). Read-only: add or remove them in the TTLock app. Supported by some controllers (e.g. SmartThings, Home Assistant). Changing this option changes the lock's Matter features; your controller may need to refresh the device.",
+      "type": "boolean",
+      "default": false
+    },
     "webhook": {
       "title": "Webhook (real-time records from the TTLock cloud)",
       "description": "Optional. When someone uses a fingerprint, card, passcode or key, the TTLock cloud tells the plugin right away, including who and how.",
