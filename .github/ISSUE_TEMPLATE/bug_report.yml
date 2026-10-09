@@ -1,0 +1,70 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **remove secrets** (client secret, passwords, encryption keys, Bluetooth keys, webhook URL) from anything you paste.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: e.g. 1.4.0
+    validations:
+      required: true
+  - type: input
+    id: matterbridge-version
+    attributes:
+      label: Matterbridge version
+      placeholder: e.g. 3.10.12
+    validations:
+      required: true
+  - type: dropdown
+    id: controller
+    attributes:
+      label: Matter controller
+      multiple: true
+      options:
+        - Apple Home
+        - Google Home
+        - Amazon Alexa
+        - Home Assistant
+        - SmartThings
+        - Other
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Connection mode
+      options:
+        - Cloud only (no ESP32)
+        - auto (ESP32 + cloud)
+        - local (ESP32 only)
+    validations:
+      required: true
+  - type: input
+    id: lock
+    attributes:
+      label: Lock model and gateway
+      placeholder: e.g. TTLock fingerprint deadbolt, G2 gateway
+  - type: checkboxes
+    id: features
+    attributes:
+      label: Optional features in use
+      options:
+        - label: Webhook
+        - label: Show lock users in Matter
+        - label: Read who/how from the lock history
+  - type: textarea
+    id: logs
+    attributes:
+      label: Matterbridge log
+      description: Turn on **debug** in the plugin settings, reproduce the problem, and paste the plugin lines. Remove secrets first.
+      render: text
