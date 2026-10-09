@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve matterbridge-ttlock! Bug reports, ideas and pull requests are welcome.
+Thanks for helping improve matterbridge-ttlock! Bug reports, ideas and pull requests are welcome. Please follow the [Code of conduct](CODE_OF_CONDUCT.md).
 
 ## Reporting bugs and ideas
 
