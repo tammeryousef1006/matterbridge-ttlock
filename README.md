@@ -1,6 +1,6 @@
 # Matterbridge TTLock Plugin
 
-[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/6sjde6vkzl)
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/6sjde6vkzl) [![Discord](https://img.shields.io/badge/Discord-Matterbridge-5865F2?logo=discord&logoColor=white)](https://discord.gg/F2GupTjQdu)
 
 A Matterbridge plugin for controlling TTLock smart locks via the TTLock API. This plugin integrates TTLock devices with [Luligu's Matterbridge](https://github.com/Luligu/matterbridge), allowing you to control your TTLock devices through Matter.
 
@@ -312,6 +312,12 @@ npm pack
 ```
 
 ## Support
+
+### Need help?
+
+Join the **[Matterbridge Discord](https://discord.gg/F2GupTjQdu)** to get help with setting up Matterbridge and this plugin, and to talk with other Matterbridge users. If you think you found a bug, please open an [issue](https://github.com/tammeryousef1006/matterbridge-ttlock/issues) with the Matterbridge log.
+
+### Support the development
 
 If this plugin is useful to you, you can support its development:
 
